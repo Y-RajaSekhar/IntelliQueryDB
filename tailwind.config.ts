@@ -57,6 +57,17 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        // Custom database theme colors
+        neon: {
+          green: "hsl(var(--neon-green))",
+          blue: "hsl(var(--neon-blue))",
+          purple: "hsl(var(--neon-purple))",
+          orange: "hsl(var(--neon-orange))",
+        },
+        terminal: {
+          bg: "hsl(var(--terminal-bg))",
+          border: "hsl(var(--terminal-border))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
