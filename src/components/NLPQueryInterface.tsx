@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Brain, ArrowRight, Lightbulb, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface NLPResult {
   naturalQuery: string;
@@ -19,15 +20,44 @@ export const NLPQueryInterface = () => {
   const [naturalQuery, setNaturalQuery] = useState("");
   const [result, setResult] = useState<NLPResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [students, setStudents] = useState<any[]>([]);
 
-  // Mock data
-  const mockStudents = [
-    { id: 1, name: "Alice Johnson", age: 20, gpa: 3.8, major: "Computer Science", hoursStudied: 25 },
-    { id: 2, name: "Bob Smith", age: 22, gpa: 3.2, major: "Mathematics", hoursStudied: 20 },
-    { id: 3, name: "Carol Davis", age: 19, gpa: 3.9, major: "Physics", hoursStudied: 30 },
-    { id: 4, name: "David Wilson", age: 21, gpa: 3.5, major: "Computer Science", hoursStudied: 22 },
-    { id: 5, name: "Eve Brown", age: 23, gpa: 3.7, major: "Chemistry", hoursStudied: 28 },
-  ];
+  // Fetch real student data from Supabase
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('students')
+          .select('*');
+        
+        if (error) {
+          console.error('Error fetching students:', error);
+          // Fallback to mock data if database fetch fails
+          setStudents([
+            { id: 1, first_name: "Alice", last_name: "Johnson", year: 2, gpa: 3.8, department: "Computer Science" },
+            { id: 2, first_name: "Bob", last_name: "Smith", year: 3, gpa: 3.2, department: "Mathematics" },
+            { id: 3, first_name: "Carol", last_name: "Davis", year: 1, gpa: 3.9, department: "Physics" },
+            { id: 4, first_name: "David", last_name: "Wilson", year: 2, gpa: 3.5, department: "Computer Science" },
+            { id: 5, first_name: "Eve", last_name: "Brown", year: 4, gpa: 3.7, department: "Chemistry" },
+          ]);
+        } else {
+          setStudents(data || []);
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        // Fallback to mock data
+        setStudents([
+          { id: 1, first_name: "Alice", last_name: "Johnson", year: 2, gpa: 3.8, department: "Computer Science" },
+          { id: 2, first_name: "Bob", last_name: "Smith", year: 3, gpa: 3.2, department: "Mathematics" },
+          { id: 3, first_name: "Carol", last_name: "Davis", year: 1, gpa: 3.9, department: "Physics" },
+          { id: 4, first_name: "David", last_name: "Wilson", year: 2, gpa: 3.5, department: "Computer Science" },
+          { id: 5, first_name: "Eve", last_name: "Brown", year: 4, gpa: 3.7, department: "Chemistry" },
+        ]);
+      }
+    };
+
+    fetchStudents();
+  }, []);
 
   const processNaturalLanguageQuery = async () => {
     if (!naturalQuery.trim()) return;
@@ -40,7 +70,7 @@ export const NLPQueryInterface = () => {
     try {
       // Enhanced NLP to SQL translation with better pattern matching
       let sqlQuery = "";
-      let filteredData = [...mockStudents];
+      let filteredData = [...students];
       let confidence = 0.95;
       
       const query = naturalQuery.toLowerCase().trim();
@@ -59,22 +89,22 @@ export const NLPQueryInterface = () => {
         sqlQuery = `SELECT * FROM students WHERE gpa < ${gpaThreshold} ORDER BY gpa ASC;`;
         filteredData = filteredData.filter(s => s.gpa < gpaThreshold).sort((a, b) => a.gpa - b.gpa);
       }
-      // Major filters
+      // Department filters
       else if (query.match(/computer\s+science|cs\s+students?/)) {
-        sqlQuery = "SELECT * FROM students WHERE major = 'Computer Science';";
-        filteredData = filteredData.filter(s => s.major === "Computer Science");
+        sqlQuery = "SELECT * FROM students WHERE department = 'Computer Science';";
+        filteredData = filteredData.filter(s => s.department === "Computer Science");
       }
       else if (query.match(/mathematics?|math\s+students?/)) {
-        sqlQuery = "SELECT * FROM students WHERE major = 'Mathematics';";
-        filteredData = filteredData.filter(s => s.major === "Mathematics");
+        sqlQuery = "SELECT * FROM students WHERE department = 'Mathematics';";
+        filteredData = filteredData.filter(s => s.department === "Mathematics");
       }
       else if (query.match(/physics?\s+students?/)) {
-        sqlQuery = "SELECT * FROM students WHERE major = 'Physics';";
-        filteredData = filteredData.filter(s => s.major === "Physics");
+        sqlQuery = "SELECT * FROM students WHERE department = 'Physics';";
+        filteredData = filteredData.filter(s => s.department === "Physics");
       }
       else if (query.match(/chemistry?\s+students?/)) {
-        sqlQuery = "SELECT * FROM students WHERE major = 'Chemistry';";
-        filteredData = filteredData.filter(s => s.major === "Chemistry");
+        sqlQuery = "SELECT * FROM students WHERE department = 'Chemistry';";
+        filteredData = filteredData.filter(s => s.department === "Chemistry");
       }
       // Average calculations
       else if (query.match(/average\s+gpa|mean\s+gpa|avg\s+gpa/)) {
@@ -82,26 +112,19 @@ export const NLPQueryInterface = () => {
         sqlQuery = "SELECT AVG(gpa) as average_gpa FROM students;";
         filteredData = [{ 
           id: 0, 
-          name: "Average GPA", 
-          age: 0, 
+          first_name: "Average", 
+          last_name: "GPA", 
+          year: 0, 
           gpa: parseFloat(avgGpa.toFixed(2)), 
-          major: "All Students", 
-          hoursStudied: 0 
+          department: "All Students"
         }];
       }
-      // Age filters - older than
-      else if (query.match(/older\s+than\s+(\d+)|age\s*(greater\s+than|>)\s*(\d+)/)) {
-        const ageMatch = query.match(/(\d+)/);
-        const ageThreshold = ageMatch ? parseInt(ageMatch[1]) : 20;
-        sqlQuery = `SELECT * FROM students WHERE age > ${ageThreshold} ORDER BY age DESC;`;
-        filteredData = filteredData.filter(s => s.age > ageThreshold).sort((a, b) => b.age - a.age);
-      }
-      // Age filters - younger than
-      else if (query.match(/younger\s+than\s+(\d+)|age\s*(less\s+than|<)\s*(\d+)/)) {
-        const ageMatch = query.match(/(\d+)/);
-        const ageThreshold = ageMatch ? parseInt(ageMatch[1]) : 22;
-        sqlQuery = `SELECT * FROM students WHERE age < ${ageThreshold} ORDER BY age ASC;`;
-        filteredData = filteredData.filter(s => s.age < ageThreshold).sort((a, b) => a.age - b.age);
+      // Year filters
+      else if (query.match(/year\s+(\d+)|(\d+)\s+year/)) {
+        const yearMatch = query.match(/(\d+)/);
+        const targetYear = yearMatch ? parseInt(yearMatch[1]) : 1;
+        sqlQuery = `SELECT * FROM students WHERE year = ${targetYear} ORDER BY first_name;`;
+        filteredData = filteredData.filter(s => s.year === targetYear).sort((a, b) => a.first_name.localeCompare(b.first_name));
       }
       // Top performers
       else if (query.match(/top\s+(\d+)|best\s+(\d+)|highest\s+gpa/)) {
@@ -110,41 +133,35 @@ export const NLPQueryInterface = () => {
         sqlQuery = `SELECT * FROM students ORDER BY gpa DESC LIMIT ${limit};`;
         filteredData = filteredData.sort((a, b) => b.gpa - a.gpa).slice(0, limit);
       }
-      // Study hours filters
-      else if (query.match(/study\s+hours?\s*(above|greater\s+than|>)\s*(\d+)/)) {
-        const hoursMatch = query.match(/(\d+)/);
-        const hoursThreshold = hoursMatch ? parseInt(hoursMatch[1]) : 25;
-        sqlQuery = `SELECT * FROM students WHERE hoursStudied > ${hoursThreshold} ORDER BY hoursStudied DESC;`;
-        filteredData = filteredData.filter(s => s.hoursStudied > hoursThreshold).sort((a, b) => b.hoursStudied - a.hoursStudied);
-      }
       // Count queries
       else if (query.match(/how\s+many|count|total\s+students?/)) {
         const count = filteredData.length;
         sqlQuery = "SELECT COUNT(*) as total_students FROM students;";
         filteredData = [{ 
           id: 0, 
-          name: "Total Students", 
-          age: 0, 
+          first_name: "Total", 
+          last_name: "Students", 
+          year: 0, 
           gpa: 0, 
-          major: "All", 
-          hoursStudied: count 
+          department: count.toString()
         }];
       }
       // Name search
       else if (query.match(/student\s+named?\s+(\w+)|find\s+(\w+)/)) {
         const nameMatch = query.match(/named?\s+(\w+)|find\s+(\w+)/);
         const searchName = nameMatch ? nameMatch[1] || nameMatch[2] : "";
-        sqlQuery = `SELECT * FROM students WHERE name ILIKE '%${searchName}%';`;
+        sqlQuery = `SELECT * FROM students WHERE first_name ILIKE '%${searchName}%' OR last_name ILIKE '%${searchName}%';`;
         filteredData = filteredData.filter(s => 
-          s.name.toLowerCase().includes(searchName.toLowerCase())
+          s.first_name.toLowerCase().includes(searchName.toLowerCase()) ||
+          s.last_name.toLowerCase().includes(searchName.toLowerCase())
         );
         confidence = 0.85;
       }
       else {
         // Fallback - show all students
-        sqlQuery = "SELECT * FROM students ORDER BY name;";
+        sqlQuery = "SELECT * FROM students ORDER BY first_name, last_name;";
         confidence = 0.6;
-        filteredData = filteredData.sort((a, b) => a.name.localeCompare(b.name));
+        filteredData = filteredData.sort((a, b) => a.first_name.localeCompare(b.first_name));
       }
       
       setResult({
@@ -175,9 +192,9 @@ export const NLPQueryInterface = () => {
     "Show me all students with GPA above 3.5",
     "List computer science students", 
     "What's the average GPA of all students?",
-    "Find students younger than 21",
+    "Find students in year 2",
     "Show me the top 3 students by GPA",
-    "Students with study hours greater than 25",
+    "Students from Chemistry department",
     "How many students are there?",
     "Find student named Alice",
   ];
