@@ -77,6 +77,70 @@ export const DatabaseManager = () => {
     return "destructive";
   };
 
+  const handleExportData = () => {
+    try {
+      const dataStr = JSON.stringify(students, null, 2);
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `student_data_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      toast({
+        title: "Success",
+        description: "Data exported successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to export data",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImportData = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target?.result as string);
+          if (Array.isArray(data) && data.every(item => 
+            item.hasOwnProperty('id') && 
+            item.hasOwnProperty('name') && 
+            item.hasOwnProperty('gpa')
+          )) {
+            setStudents(data);
+            toast({
+              title: "Success",
+              description: `Imported ${data.length} student records`,
+            });
+          } else {
+            throw new Error("Invalid data format");
+          }
+        } catch (error) {
+          toast({
+            title: "Error",
+            description: "Invalid JSON file or data format",
+            variant: "destructive",
+          });
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
   return (
     <div className="space-y-6">
       {/* Database Overview */}
@@ -191,11 +255,11 @@ export const DatabaseManager = () => {
               <CardDescription>Database contents with CRUD operations</CardDescription>
             </div>
             <div className="flex space-x-2">
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={handleImportData}>
                 <Upload className="h-4 w-4 mr-2" />
                 Import
               </Button>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={handleExportData}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
