@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,68 +7,133 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Edit, Download, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface Student {
-  id: number;
-  name: string;
-  age: number;
-  gpa: number;
-  major: string;
-  hoursStudied: number;
+  id: string;
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  department: string;
+  year: number;
+  gpa?: number;
 }
 
 export const DatabaseManager = () => {
   const { toast } = useToast();
-  const [students, setStudents] = useState<Student[]>([
-    { id: 1, name: "Alice Johnson", age: 20, gpa: 3.8, major: "Computer Science", hoursStudied: 25 },
-    { id: 2, name: "Bob Smith", age: 22, gpa: 3.2, major: "Mathematics", hoursStudied: 20 },
-    { id: 3, name: "Carol Davis", age: 19, gpa: 3.9, major: "Physics", hoursStudied: 30 },
-    { id: 4, name: "David Wilson", age: 21, gpa: 3.5, major: "Computer Science", hoursStudied: 22 },
-    { id: 5, name: "Eve Brown", age: 23, gpa: 3.7, major: "Chemistry", hoursStudied: 28 },
-  ]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [newStudent, setNewStudent] = useState({
-    name: "",
-    age: "",
+    first_name: "",
+    last_name: "",
+    email: "",
+    student_id: "",
+    department: "",
+    year: "",
     gpa: "",
-    major: "",
-    hoursStudied: "",
   });
 
-  const handleAddStudent = () => {
-    if (!newStudent.name || !newStudent.age || !newStudent.gpa || !newStudent.major || !newStudent.hoursStudied) {
+  // Fetch students from Supabase
+  useEffect(() => {
+    fetchStudents();
+  }, []);
+
+  const fetchStudents = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('students')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      setStudents(data || []);
+    } catch (error) {
+      console.error('Error fetching students:', error);
       toast({
         title: "Error",
-        description: "Please fill in all fields",
+        description: "Failed to load student records",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddStudent = async () => {
+    if (!newStudent.first_name || !newStudent.last_name || !newStudent.email || 
+        !newStudent.student_id || !newStudent.department || !newStudent.year) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields",
         variant: "destructive",
       });
       return;
     }
 
-    const student: Student = {
-      id: Math.max(...students.map(s => s.id)) + 1,
-      name: newStudent.name,
-      age: parseInt(newStudent.age),
-      gpa: parseFloat(newStudent.gpa),
-      major: newStudent.major,
-      hoursStudied: parseInt(newStudent.hoursStudied),
-    };
+    try {
+      const studentData = {
+        id: crypto.randomUUID(),
+        student_id: newStudent.student_id,
+        first_name: newStudent.first_name,
+        last_name: newStudent.last_name,
+        email: newStudent.email,
+        department: newStudent.department,
+        year: parseInt(newStudent.year),
+      };
 
-    setStudents([...students, student]);
-    setNewStudent({ name: "", age: "", gpa: "", major: "", hoursStudied: "" });
-    
-    toast({
-      title: "Success",
-      description: "Student record added successfully",
-    });
+      const { error } = await supabase
+        .from('students')
+        .insert([studentData]);
+
+      if (error) throw error;
+
+      await fetchStudents();
+      setNewStudent({ 
+        first_name: "", 
+        last_name: "", 
+        email: "", 
+        student_id: "", 
+        department: "", 
+        year: "", 
+        gpa: "" 
+      });
+      
+      toast({
+        title: "Success",
+        description: "Student record added successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add student",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleDeleteStudent = (id: number) => {
-    setStudents(students.filter(s => s.id !== id));
-    toast({
-      title: "Success",
-      description: "Student record deleted",
-    });
+  const handleDeleteStudent = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('students')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await fetchStudents();
+      toast({
+        title: "Success",
+        description: "Student record deleted",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete student",
+        variant: "destructive",
+      });
+    }
   };
 
   const getGPABadgeVariant = (gpa: number) => {
@@ -107,31 +172,51 @@ export const DatabaseManager = () => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
 
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
           const data = JSON.parse(e.target?.result as string);
-          if (Array.isArray(data) && data.every(item => 
-            item.hasOwnProperty('id') && 
-            item.hasOwnProperty('name') && 
-            item.hasOwnProperty('gpa')
-          )) {
-            setStudents(data);
-            toast({
-              title: "Success",
-              description: `Imported ${data.length} student records`,
-            });
-          } else {
-            throw new Error("Invalid data format");
+          if (!Array.isArray(data)) {
+            throw new Error("Data must be an array");
           }
-        } catch (error) {
+
+          // Transform data to match Supabase schema if needed
+          const transformedData = data.map((item: any) => {
+            // Handle old format (name field) or new format (first_name/last_name)
+            const firstName = item.first_name || item.name?.split(' ')[0] || '';
+            const lastName = item.last_name || item.name?.split(' ').slice(1).join(' ') || '';
+            
+            return {
+              id: item.id || crypto.randomUUID(),
+              student_id: item.student_id || `STU${Date.now()}${Math.random().toString(36).substr(2, 5)}`,
+              first_name: firstName,
+              last_name: lastName,
+              email: item.email || `${firstName.toLowerCase()}@example.com`,
+              department: item.department || item.major || 'General',
+              year: item.year || 1,
+            };
+          });
+
+          // Insert data into Supabase
+          const { error } = await supabase
+            .from('students')
+            .insert(transformedData);
+
+          if (error) throw error;
+
+          await fetchStudents();
+          toast({
+            title: "Success",
+            description: `Imported ${transformedData.length} student records to database`,
+          });
+        } catch (error: any) {
           toast({
             title: "Error",
-            description: "Invalid JSON file or data format",
+            description: error.message || "Invalid JSON file or data format",
             variant: "destructive",
           });
         }
@@ -161,7 +246,11 @@ export const DatabaseManager = () => {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-neon-blue">
-              {(students.reduce((sum, s) => sum + s.gpa, 0) / students.length).toFixed(2)}
+              {students.length > 0 
+                ? students.filter(s => s.gpa).length > 0
+                  ? (students.reduce((sum, s) => sum + (s.gpa || 0), 0) / students.filter(s => s.gpa).length).toFixed(2)
+                  : 'N/A'
+                : '0.00'}
             </div>
             <p className="text-sm text-muted-foreground">Across all students</p>
           </CardContent>
@@ -188,28 +277,65 @@ export const DatabaseManager = () => {
           <CardDescription>Insert a new record into the database</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4 mb-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="first_name">First Name</Label>
               <Input
-                id="name"
-                value={newStudent.name}
-                onChange={(e) => setNewStudent({ ...newStudent, name: e.target.value })}
-                placeholder="Student name"
+                id="first_name"
+                value={newStudent.first_name}
+                onChange={(e) => setNewStudent({ ...newStudent, first_name: e.target.value })}
+                placeholder="First name"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="age">Age</Label>
+              <Label htmlFor="last_name">Last Name</Label>
               <Input
-                id="age"
+                id="last_name"
+                value={newStudent.last_name}
+                onChange={(e) => setNewStudent({ ...newStudent, last_name: e.target.value })}
+                placeholder="Last name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={newStudent.email}
+                onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
+                placeholder="Email"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="student_id">Student ID</Label>
+              <Input
+                id="student_id"
+                value={newStudent.student_id}
+                onChange={(e) => setNewStudent({ ...newStudent, student_id: e.target.value })}
+                placeholder="Student ID"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="department">Department</Label>
+              <Input
+                id="department"
+                value={newStudent.department}
+                onChange={(e) => setNewStudent({ ...newStudent, department: e.target.value })}
+                placeholder="Department"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="year">Year</Label>
+              <Input
+                id="year"
                 type="number"
-                value={newStudent.age}
-                onChange={(e) => setNewStudent({ ...newStudent, age: e.target.value })}
-                placeholder="Age"
+                value={newStudent.year}
+                onChange={(e) => setNewStudent({ ...newStudent, year: e.target.value })}
+                placeholder="Year"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="gpa">GPA</Label>
+              <Label htmlFor="gpa">GPA (Optional)</Label>
               <Input
                 id="gpa"
                 type="number"
@@ -217,25 +343,6 @@ export const DatabaseManager = () => {
                 value={newStudent.gpa}
                 onChange={(e) => setNewStudent({ ...newStudent, gpa: e.target.value })}
                 placeholder="GPA"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="major">Major</Label>
-              <Input
-                id="major"
-                value={newStudent.major}
-                onChange={(e) => setNewStudent({ ...newStudent, major: e.target.value })}
-                placeholder="Major"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="hours">Hours Studied</Label>
-              <Input
-                id="hours"
-                type="number"
-                value={newStudent.hoursStudied}
-                onChange={(e) => setNewStudent({ ...newStudent, hoursStudied: e.target.value })}
-                placeholder="Weekly hours"
               />
             </div>
           </div>
@@ -271,44 +378,61 @@ export const DatabaseManager = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
+                  <TableHead>Student ID</TableHead>
                   <TableHead>Name</TableHead>
-                  <TableHead>Age</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Department</TableHead>
+                  <TableHead>Year</TableHead>
                   <TableHead>GPA</TableHead>
-                  <TableHead>Major</TableHead>
-                  <TableHead>Hours/Week</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {students.map((student) => (
-                  <TableRow key={student.id} className="hover:bg-muted/50">
-                    <TableCell className="font-mono">{student.id}</TableCell>
-                    <TableCell className="font-medium">{student.name}</TableCell>
-                    <TableCell>{student.age}</TableCell>
-                    <TableCell>
-                      <Badge variant={getGPABadgeVariant(student.gpa) as any}>
-                        {student.gpa.toFixed(1)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{student.major}</TableCell>
-                    <TableCell>{student.hoursStudied}</TableCell>
-                    <TableCell>
-                      <div className="flex space-x-2">
-                        <Button variant="ghost" size="sm">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => handleDeleteStudent(student.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8">
+                      Loading...
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : students.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No students found. Add or import student records.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  students.map((student) => (
+                    <TableRow key={student.id} className="hover:bg-muted/50">
+                      <TableCell className="font-mono">{student.student_id}</TableCell>
+                      <TableCell className="font-medium">
+                        {student.first_name} {student.last_name}
+                      </TableCell>
+                      <TableCell>{student.email}</TableCell>
+                      <TableCell>{student.department}</TableCell>
+                      <TableCell>{student.year}</TableCell>
+                      <TableCell>
+                        {student.gpa ? (
+                          <Badge variant={getGPABadgeVariant(student.gpa) as any}>
+                            {student.gpa.toFixed(1)}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">N/A</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex space-x-2">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => handleDeleteStudent(student.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>
