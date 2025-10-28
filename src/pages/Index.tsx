@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Database, Brain, BarChart3, Search, Server, Zap } from "lucide-react";
-import { DatabaseManager } from "@/components/DatabaseManager";
+import { GenericDatabaseManager } from "@/components/GenericDatabaseManager";
 import { QueryInterface } from "@/components/QueryInterface";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
-import { NLPQueryInterface } from "@/components/NLPQueryInterface";
+import { GenericNLPQueryInterface } from "@/components/GenericNLPQueryInterface";
 import { PerformanceMonitor } from "@/components/PerformanceMonitor";
 
 const Index = () => {
@@ -65,7 +65,7 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="database" className="space-y-6">
-            <DatabaseManager />
+            <GenericDatabaseManager />
           </TabsContent>
 
           <TabsContent value="query" className="space-y-6">
@@ -73,7 +73,7 @@ const Index = () => {
           </TabsContent>
 
           <TabsContent value="nlp" className="space-y-6">
-            <NLPQueryInterface />
+            <GenericNLPQueryInterface />
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">

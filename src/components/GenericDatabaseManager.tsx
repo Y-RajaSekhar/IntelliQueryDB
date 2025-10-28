@@ -1,0 +1,231 @@
+import { useState } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Plus, Trash2, Download, Upload } from "lucide-react";
+import { useDataStore } from "@/hooks/useDataStore";
+
+export const GenericDatabaseManager = () => {
+  const { 
+    records, 
+    schema, 
+    recordType, 
+    loading, 
+    addRecord, 
+    deleteRecord, 
+    importRecords, 
+    exportRecords 
+  } = useDataStore();
+
+  const [newRecord, setNewRecord] = useState<Record<string, string>>({});
+
+  const handleAddRecord = async () => {
+    if (schema.length === 0) {
+      return;
+    }
+
+    const hasEmptyFields = schema.some(field => !newRecord[field]);
+    if (hasEmptyFields) {
+      return;
+    }
+
+    const success = await addRecord(newRecord);
+    if (success) {
+      setNewRecord({});
+    }
+  };
+
+  const handleImportData = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const data = JSON.parse(e.target?.result as string);
+          await importRecords(data);
+        } catch (error) {
+          console.error('Import error:', error);
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  const calculateStats = () => {
+    if (records.length === 0) return null;
+
+    const numericFields = schema.filter(field => {
+      const sample = records[0]?.data[field];
+      return typeof sample === 'number';
+    });
+
+    return numericFields.map(field => {
+      const values = records.map(r => r.data[field]).filter(v => typeof v === 'number');
+      const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+      return { field, avg };
+    });
+  };
+
+  const stats = calculateStats();
+
+  return (
+    <div className="space-y-6">
+      {/* Database Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card className="bg-card/50 backdrop-blur terminal-glow">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Total Records</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-primary">{records.length}</div>
+            <p className="text-sm text-muted-foreground capitalize">{recordType} records</p>
+          </CardContent>
+        </Card>
+        
+        {stats && stats.length > 0 && (
+          <>
+            <Card className="bg-card/50 backdrop-blur">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg capitalize">Avg {stats[0].field}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-neon-blue">
+                  {stats[0].avg.toFixed(2)}
+                </div>
+                <p className="text-sm text-muted-foreground">Across all records</p>
+              </CardContent>
+            </Card>
+            
+            <Card className="bg-card/50 backdrop-blur">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Data Type</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-neon-purple capitalize">{recordType}</div>
+                <p className="text-sm text-muted-foreground">{schema.length} fields detected</p>
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </div>
+
+      {/* Add New Record */}
+      {schema.length > 0 && (
+        <Card className="bg-card/50 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Plus className="h-5 w-5" />
+              <span>Add New Record</span>
+            </CardTitle>
+            <CardDescription>Insert a new {recordType} record</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-4">
+              {schema.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={field} className="capitalize">
+                    {field.replace(/_/g, ' ')}
+                  </Label>
+                  <Input
+                    id={field}
+                    value={newRecord[field] || ''}
+                    onChange={(e) => setNewRecord({ ...newRecord, [field]: e.target.value })}
+                    placeholder={field}
+                  />
+                </div>
+              ))}
+            </div>
+            <Button onClick={handleAddRecord} className="w-full md:w-auto">
+              <Plus className="h-4 w-4 mr-2" />
+              Add Record
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Data Table */}
+      <Card className="bg-card/50 backdrop-blur">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="capitalize">{recordType} Records</CardTitle>
+              <CardDescription>Database contents with CRUD operations</CardDescription>
+            </div>
+            <div className="flex space-x-2">
+              <Button variant="outline" size="sm" onClick={handleImportData}>
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
+              <Button variant="outline" size="sm" onClick={exportRecords} disabled={records.length === 0}>
+                <Download className="h-4 w-4 mr-2" />
+                Export
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border border-terminal-border bg-terminal-bg/50 overflow-x-auto">
+            <Table>
+              {schema.length > 0 && (
+                <TableHeader>
+                  <TableRow>
+                    {schema.map((field) => (
+                      <TableHead key={field} className="capitalize">
+                        {field.replace(/_/g, ' ')}
+                      </TableHead>
+                    ))}
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+              )}
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={schema.length + 1} className="text-center py-8">
+                      Loading...
+                    </TableCell>
+                  </TableRow>
+                ) : records.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={schema.length + 1} className="text-center py-8 text-muted-foreground">
+                      No records found. Import a JSON file to get started.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  records.map((record) => (
+                    <TableRow key={record.id} className="hover:bg-muted/50">
+                      {schema.map((field) => (
+                        <TableCell key={field} className="font-mono">
+                          {typeof record.data[field] === 'object' 
+                            ? JSON.stringify(record.data[field])
+                            : String(record.data[field] ?? '')}
+                        </TableCell>
+                      ))}
+                      <TableCell>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => deleteRecord(record.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};

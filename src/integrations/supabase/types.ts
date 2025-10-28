@@ -93,6 +93,30 @@ export type Database = {
           },
         ]
       }
+      data_records: {
+        Row: {
+          created_at: string | null
+          data: Json
+          id: string
+          record_type: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          data: Json
+          id?: string
+          record_type: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          data?: Json
+          id?: string
+          record_type?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       grades: {
         Row: {
           academic_year: string
