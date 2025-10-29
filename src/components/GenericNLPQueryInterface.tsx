@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Brain, ArrowRight, Lightbulb, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDataStore } from "@/hooks/useDataStore";
+import { supabase } from "@/integrations/supabase/client";
 
 interface NLPResult {
   naturalQuery: string;
@@ -26,103 +27,116 @@ export const GenericNLPQueryInterface = () => {
     if (!naturalQuery.trim() || records.length === 0) return;
     
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const startTime = performance.now();
     
     try {
-      let sqlQuery = "";
-      let filteredData = records.map(r => r.data);
-      let confidence = 0.95;
+      // Call the AI edge function to interpret the query
+      const sampleData = records.slice(0, 5).map(r => r.data);
       
-      const query = naturalQuery.toLowerCase().trim();
-      
-      // Generic filtering based on detected numeric fields
-      const numericFields = schema.filter(field => {
-        const sample = records[0]?.data[field];
-        return typeof sample === 'number';
+      const { data: aiResponse, error: functionError } = await supabase.functions.invoke('nlp-query', {
+        body: {
+          query: naturalQuery,
+          schema,
+          sampleData,
+          recordType
+        }
       });
+
+      if (functionError) {
+        throw functionError;
+      }
+
+      if (!aiResponse) {
+        throw new Error("No response from AI");
+      }
+
+      // Apply the AI's interpretation to filter/process the data
+      let filteredData = records.map(r => r.data);
+      let sqlQuery = "";
       
-      // Check for numeric comparisons (above/greater than)
-      const greaterMatch = query.match(/(above|greater\s+than|>)\s*(\d+\.?\d*)/);
-      if (greaterMatch && numericFields.length > 0) {
-        const threshold = parseFloat(greaterMatch[2]);
-        const field = numericFields.find(f => query.includes(f.toLowerCase())) || numericFields[0];
-        sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} > ${threshold} ORDER BY ${field} DESC;`;
-        filteredData = filteredData.filter((r: any) => r[field] > threshold).sort((a: any, b: any) => b[field] - a[field]);
-      }
-      // Check for numeric comparisons (below/less than)
-      else if (query.match(/(below|less\s+than|<)\s*(\d+\.?\d*)/) && numericFields.length > 0) {
-        const lessMatch = query.match(/(\d+\.?\d*)/);
-        const threshold = lessMatch ? parseFloat(lessMatch[1]) : 0;
-        const field = numericFields.find(f => query.includes(f.toLowerCase())) || numericFields[0];
-        sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} < ${threshold} ORDER BY ${field} ASC;`;
-        filteredData = filteredData.filter((r: any) => r[field] < threshold).sort((a: any, b: any) => a[field] - b[field]);
-      }
-      // Average calculations
-      else if (query.match(/average|mean|avg/) && numericFields.length > 0) {
-        const field = numericFields.find(f => query.includes(f.toLowerCase())) || numericFields[0];
+      const { operation, field, condition, value, limit, interpretation } = aiResponse;
+      
+      // Generate SQL representation
+      if (operation === "filter" && field && condition && value !== null) {
+        const operators: Record<string, string> = {
+          gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", contains: "ILIKE"
+        };
+        const op = operators[condition] || "=";
+        const sqlValue = condition === "contains" ? `'%${value}%'` : value;
+        sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} ${op} ${sqlValue};`;
+        
+        // Apply filter
+        filteredData = filteredData.filter((r: any) => {
+          const fieldValue = r[field];
+          if (condition === "gt") return fieldValue > value;
+          if (condition === "lt") return fieldValue < value;
+          if (condition === "gte") return fieldValue >= value;
+          if (condition === "lte") return fieldValue <= value;
+          if (condition === "eq") return fieldValue == value;
+          if (condition === "contains") return String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+          return true;
+        });
+      } else if (operation === "aggregate" && field && condition) {
         const values = filteredData.map((r: any) => r[field]).filter((v: any) => typeof v === 'number');
-        const avg = values.reduce((sum: number, v: number) => sum + v, 0) / values.length;
-        sqlQuery = `SELECT AVG(${field}) as average_${field} FROM ${recordType};`;
-        filteredData = [{ 
-          [field]: parseFloat(avg.toFixed(2)),
-          description: `Average ${field}`
-        }];
-      }
-      // Top N records
-      else if (query.match(/top\s+(\d+)|best\s+(\d+)|highest/) && numericFields.length > 0) {
-        const limitMatch = query.match(/top\s+(\d+)|best\s+(\d+)/);
-        const limit = limitMatch ? parseInt(limitMatch[1] || limitMatch[2]) : 3;
-        const field = numericFields.find(f => query.includes(f.toLowerCase())) || numericFields[0];
-        sqlQuery = `SELECT * FROM ${recordType} ORDER BY ${field} DESC LIMIT ${limit};`;
-        filteredData = filteredData.sort((a: any, b: any) => b[field] - a[field]).slice(0, limit);
-      }
-      // Count queries
-      else if (query.match(/how\s+many|count|total/)) {
+        let result = 0;
+        
+        if (condition === "avg") {
+          result = values.reduce((sum: number, v: number) => sum + v, 0) / values.length;
+          sqlQuery = `SELECT AVG(${field}) as average FROM ${recordType};`;
+        } else if (condition === "sum") {
+          result = values.reduce((sum: number, v: number) => sum + v, 0);
+          sqlQuery = `SELECT SUM(${field}) as total FROM ${recordType};`;
+        } else if (condition === "max") {
+          result = Math.max(...values);
+          sqlQuery = `SELECT MAX(${field}) as maximum FROM ${recordType};`;
+        } else if (condition === "min") {
+          result = Math.min(...values);
+          sqlQuery = `SELECT MIN(${field}) as minimum FROM ${recordType};`;
+        }
+        
+        filteredData = [{ [field]: parseFloat(result.toFixed(2)), description: `${condition.toUpperCase()} of ${field}` }];
+      } else if (operation === "count") {
         const count = filteredData.length;
         sqlQuery = `SELECT COUNT(*) as total FROM ${recordType};`;
         filteredData = [{ total: count, description: `Total ${recordType}` }];
-      }
-      // Field-based text search
-      else {
-        const textFields = schema.filter(field => {
-          const sample = records[0]?.data[field];
-          return typeof sample === 'string';
+      } else if (operation === "sort" && field) {
+        sqlQuery = `SELECT * FROM ${recordType} ORDER BY ${field} DESC${limit ? ` LIMIT ${limit}` : ""};`;
+        filteredData = filteredData.sort((a: any, b: any) => {
+          const aVal = a[field];
+          const bVal = b[field];
+          return typeof aVal === 'number' ? bVal - aVal : String(bVal).localeCompare(String(aVal));
         });
-        
-        // Extract search term
-        const searchTermMatch = query.match(/find|search|show|get|named?\s+(\w+)/);
-        if (searchTermMatch && textFields.length > 0) {
-          const searchTerm = searchTermMatch[1] || query.split(' ').pop() || '';
-          const field = textFields[0];
-          sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} ILIKE '%${searchTerm}%';`;
-          filteredData = filteredData.filter((r: any) => 
-            String(r[field] || '').toLowerCase().includes(searchTerm.toLowerCase())
-          );
-          confidence = 0.85;
-        } else {
-          // Fallback - show all
-          sqlQuery = `SELECT * FROM ${recordType} ORDER BY created_at DESC;`;
-          confidence = 0.6;
-        }
+        if (limit) filteredData = filteredData.slice(0, limit);
+      } else if (operation === "search" && field && value) {
+        sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} ILIKE '%${value}%';`;
+        filteredData = filteredData.filter((r: any) => 
+          String(r[field] || '').toLowerCase().includes(String(value).toLowerCase())
+        );
+      } else {
+        // Show all
+        sqlQuery = `SELECT * FROM ${recordType};`;
       }
+      
+      const executionTime = performance.now() - startTime;
       
       setResult({
         naturalQuery,
         sqlQuery,
-        confidence,
+        confidence: 0.95,
         data: filteredData,
-        executionTime: Math.random() * 300 + 100,
+        executionTime,
       });
       
       toast({
-        title: "Query processed successfully",
-        description: `Translated natural language to SQL with ${(confidence * 100).toFixed(0)}% confidence`,
+        title: "AI Query Processed",
+        description: interpretation || "Query processed successfully",
       });
       
-    } catch (error) {
+    } catch (error: any) {
+      console.error("NLP Query Error:", error);
       toast({
-        title: "Processing failed",
-        description: "Could not understand the natural language query",
+        title: "Query Failed",
+        description: error.message || "Could not process the query. Please try again.",
         variant: "destructive",
       });
     }

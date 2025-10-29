@@ -1,1 +1,4 @@
 project_id = "yuxxavwiimengdijdzqm"
+
+[functions.nlp-query]
+verify_jwt = false
