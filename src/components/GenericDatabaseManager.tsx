@@ -86,21 +86,129 @@ export const GenericDatabaseManager = () => {
   const handleImportData = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".json";
+    input.accept = ".json,.csv,.pdf,.docx";
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const data = JSON.parse(e.target?.result as string);
-          await importRecords(data);
-        } catch (error) {
-          console.error('Import error:', error);
+      const fileName = file.name.toLowerCase();
+
+      try {
+        // Handle JSON files
+        if (fileName.endsWith('.json')) {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const data = JSON.parse(e.target?.result as string);
+              await importRecords(data);
+            } catch (error) {
+              console.error('JSON import error:', error);
+              toast({
+                title: "Import Failed",
+                description: "Invalid JSON format",
+                variant: "destructive",
+              });
+            }
+          };
+          reader.readAsText(file);
+          return;
         }
-      };
-      reader.readAsText(file);
+
+        // Handle CSV files with papaparse
+        if (fileName.endsWith('.csv')) {
+          const Papa = await import('papaparse');
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const csv = e.target?.result as string;
+              Papa.parse(csv, {
+                header: true,
+                dynamicTyping: true,
+                skipEmptyLines: true,
+                complete: async (results) => {
+                  if (results.data && results.data.length > 0) {
+                    await importRecords(results.data, 'csv_import');
+                  } else {
+                    toast({
+                      title: "Import Failed",
+                      description: "No data found in CSV file",
+                      variant: "destructive",
+                    });
+                  }
+                },
+                error: (error: Error) => {
+                  toast({
+                    title: "CSV Parse Error",
+                    description: error.message,
+                    variant: "destructive",
+                  });
+                }
+              });
+            } catch (error) {
+              console.error('CSV import error:', error);
+              toast({
+                title: "Import Failed",
+                description: "Failed to parse CSV file",
+                variant: "destructive",
+              });
+            }
+          };
+          reader.readAsText(file);
+          return;
+        }
+
+        // Handle PDF and DOCX files via edge function
+        if (fileName.endsWith('.pdf') || fileName.endsWith('.docx')) {
+          toast({
+            title: "Processing Document",
+            description: "Extracting data from document...",
+          });
+
+          const formData = new FormData();
+          formData.append('file', file);
+
+          const response = await fetch(
+            `https://yuxxavwiimengdijdzqm.supabase.co/functions/v1/parse-document-data`,
+            {
+              method: 'POST',
+              body: formData,
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error('Failed to process document');
+          }
+
+          const result = await response.json();
+          
+          if (result.success && result.data) {
+            await importRecords(result.data, result.recordType);
+            if (result.message) {
+              toast({
+                title: "Note",
+                description: result.message,
+              });
+            }
+          } else {
+            throw new Error(result.error || 'Failed to extract data');
+          }
+          return;
+        }
+
+        toast({
+          title: "Unsupported Format",
+          description: "Please use JSON, CSV, PDF, or DOCX files",
+          variant: "destructive",
+        });
+
+      } catch (error) {
+        console.error('Import error:', error);
+        toast({
+          title: "Import Failed",
+          description: error instanceof Error ? error.message : "Failed to import file",
+          variant: "destructive",
+        });
+      }
     };
     input.click();
   };
@@ -208,7 +316,7 @@ export const GenericDatabaseManager = () => {
             <div className="flex space-x-2">
               <Button variant="outline" size="sm" onClick={handleImportData}>
                 <Upload className="h-4 w-4 mr-2" />
-                Import
+                Import (JSON/CSV/PDF/DOCX)
               </Button>
               <Button variant="outline" size="sm" onClick={exportRecords} disabled={records.length === 0}>
                 <Download className="h-4 w-4 mr-2" />

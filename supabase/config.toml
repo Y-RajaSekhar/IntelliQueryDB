@@ -2,3 +2,6 @@ project_id = "yuxxavwiimengdijdzqm"
 
 [functions.nlp-query]
 verify_jwt = false
+
+[functions.parse-document-data]
+verify_jwt = false
