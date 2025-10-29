@@ -4,10 +4,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Download, Upload } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Plus, Trash2, Download, Upload, TrashIcon } from "lucide-react";
 import { useDataStore } from "@/hooks/useDataStore";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 export const GenericDatabaseManager = () => {
+  const { toast } = useToast();
   const { 
     records, 
     schema, 
@@ -16,10 +29,13 @@ export const GenericDatabaseManager = () => {
     addRecord, 
     deleteRecord, 
     importRecords, 
-    exportRecords 
+    exportRecords,
+    fetchRecords 
   } = useDataStore();
 
   const [newRecord, setNewRecord] = useState<Record<string, string>>({});
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
 
   const handleAddRecord = async () => {
     if (schema.length === 0) {
@@ -34,6 +50,36 @@ export const GenericDatabaseManager = () => {
     const success = await addRecord(newRecord);
     if (success) {
       setNewRecord({});
+    }
+  };
+
+  const handleDeleteRecord = async (id: string) => {
+    await deleteRecord(id);
+    setRecordToDelete(null);
+  };
+
+  const handleDeleteAll = async () => {
+    try {
+      const { error } = await supabase
+        .from('data_records')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all records
+      
+      if (error) throw error;
+      
+      await fetchRecords();
+      setShowDeleteAllDialog(false);
+      
+      toast({
+        title: "Success",
+        description: "All records deleted successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete all records",
+        variant: "destructive",
+      });
     }
   };
 
@@ -168,6 +214,15 @@ export const GenericDatabaseManager = () => {
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={() => setShowDeleteAllDialog(true)}
+                disabled={records.length === 0}
+              >
+                <TrashIcon className="h-4 w-4 mr-2" />
+                Delete All
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -213,7 +268,8 @@ export const GenericDatabaseManager = () => {
                         <Button 
                           variant="ghost" 
                           size="sm" 
-                          onClick={() => deleteRecord(record.id)}
+                          onClick={() => setRecordToDelete(record.id)}
+                          className="hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -226,6 +282,48 @@ export const GenericDatabaseManager = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Delete Single Record Dialog */}
+      <AlertDialog open={!!recordToDelete} onOpenChange={() => setRecordToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Record</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this record? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => recordToDelete && handleDeleteRecord(recordToDelete)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete All Records Dialog */}
+      <AlertDialog open={showDeleteAllDialog} onOpenChange={setShowDeleteAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete All Records</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete all {records.length} {recordType} records? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteAll}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete All
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
