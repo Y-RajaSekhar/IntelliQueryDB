@@ -1,90 +1,170 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { LineChart, Line, BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { TrendingUp, BarChart3, Target as ScatterIcon, PieChart as PieChartIcon, Brain } from "lucide-react";
-import { useState } from "react";
-
-const mockStudents = [
-  { id: 1, name: "Alice Johnson", age: 20, gpa: 3.8, major: "Computer Science", hoursStudied: 25 },
-  { id: 2, name: "Bob Smith", age: 22, gpa: 3.2, major: "Mathematics", hoursStudied: 20 },
-  { id: 3, name: "Carol Davis", age: 19, gpa: 3.9, major: "Physics", hoursStudied: 30 },
-  { id: 4, name: "David Wilson", age: 21, gpa: 3.5, major: "Computer Science", hoursStudied: 22 },
-  { id: 5, name: "Eve Brown", age: 23, gpa: 3.7, major: "Chemistry", hoursStudied: 28 },
-  { id: 6, name: "Frank Miller", age: 20, gpa: 3.1, major: "Mathematics", hoursStudied: 18 },
-  { id: 7, name: "Grace Wilson", age: 22, gpa: 3.6, major: "Physics", hoursStudied: 26 },
-  { id: 8, name: "Henry Davis", age: 21, gpa: 2.9, major: "Chemistry", hoursStudied: 15 },
-];
+import { useState, useMemo } from "react";
+import { useDataStore } from "@/hooks/useDataStore";
+import { toast } from "sonner";
 
 export const AnalyticsDashboard = () => {
-  const [selectedAnalysis, setSelectedAnalysis] = useState("gpa-hours");
+  const { records, schema } = useDataStore();
+  const [selectedAnalysis, setSelectedAnalysis] = useState<string>("");
 
-  // Data transformations for different charts
-  const gpaHoursData = mockStudents.map(s => ({
-    name: s.name.split(' ')[0],
-    gpa: s.gpa,
-    hoursStudied: s.hoursStudied,
-  }));
+  // Auto-detect field types
+  const { numericFields, categoricalFields } = useMemo(() => {
+    if (!records.length || !schema.length) return { numericFields: [], categoricalFields: [] };
 
-  const majorDistribution = mockStudents.reduce((acc, student) => {
-    acc[student.major] = (acc[student.major] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+    const numeric: string[] = [];
+    const categorical: string[] = [];
 
-  const pieData = Object.entries(majorDistribution).map(([major, count]) => ({
-    name: major,
-    value: count,
-    percentage: ((count / mockStudents.length) * 100).toFixed(1),
-  }));
+    schema.forEach(field => {
+      const sampleValues = records.slice(0, 10).map(r => r.data[field]).filter(v => v != null);
+      if (sampleValues.length === 0) return;
 
-  const ageGpaData = mockStudents.map(s => ({
-    age: s.age,
-    gpa: s.gpa,
-    name: s.name.split(' ')[0],
-  }));
+      const isNumeric = sampleValues.every(v => typeof v === 'number' || !isNaN(Number(v)));
+      if (isNumeric) {
+        numeric.push(field);
+      } else {
+        categorical.push(field);
+      }
+    });
 
-  const majorAvgGpa = Object.entries(
-    mockStudents.reduce((acc, student) => {
-      if (!acc[student.major]) acc[student.major] = { total: 0, count: 0 };
-      acc[student.major].total += student.gpa;
-      acc[student.major].count += 1;
-      return acc;
-    }, {} as Record<string, { total: number; count: number }>)
-  ).map(([major, data]) => ({
-    major: major.split(' ')[0],
-    avgGpa: parseFloat((data.total / data.count).toFixed(2)),
-  }));
+    return { numericFields: numeric, categoricalFields: categorical };
+  }, [records, schema]);
+
+  // Generate available analysis types
+  const analysisOptions = useMemo(() => {
+    const options: { value: string; label: string; icon: any }[] = [];
+
+    if (numericFields.length >= 2) {
+      for (let i = 0; i < numericFields.length - 1; i++) {
+        for (let j = i + 1; j < numericFields.length; j++) {
+          options.push({
+            value: `scatter-${numericFields[i]}-${numericFields[j]}`,
+            label: `${numericFields[i]} vs ${numericFields[j]}`,
+            icon: ScatterIcon
+          });
+        }
+      }
+    }
+
+    if (categoricalFields.length > 0) {
+      categoricalFields.forEach(field => {
+        options.push({
+          value: `pie-${field}`,
+          label: `${field} Distribution`,
+          icon: PieChartIcon
+        });
+      });
+    }
+
+    if (categoricalFields.length > 0 && numericFields.length > 0) {
+      categoricalFields.forEach(catField => {
+        numericFields.forEach(numField => {
+          options.push({
+            value: `bar-${catField}-${numField}`,
+            label: `Avg ${numField} by ${catField}`,
+            icon: BarChart3
+          });
+        });
+      });
+    }
+
+    return options;
+  }, [numericFields, categoricalFields]);
+
+  // Set default analysis
+  useMemo(() => {
+    if (!selectedAnalysis && analysisOptions.length > 0) {
+      setSelectedAnalysis(analysisOptions[0].value);
+    }
+  }, [analysisOptions, selectedAnalysis]);
+
+  // Calculate linear regression
+  const calculateRegression = (xData: number[], yData: number[]) => {
+    const n = xData.length;
+    const sumX = xData.reduce((a, b) => a + b, 0);
+    const sumY = yData.reduce((a, b) => a + b, 0);
+    const sumXY = xData.reduce((acc, x, i) => acc + x * yData[i], 0);
+    const sumX2 = xData.reduce((acc, x) => acc + x * x, 0);
+    const sumY2 = yData.reduce((acc, y) => acc + y * y, 0);
+
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+
+    const meanY = sumY / n;
+    const ssTotal = yData.reduce((acc, y) => acc + (y - meanY) ** 2, 0);
+    const ssRes = yData.reduce((acc, y, i) => acc + (y - (slope * xData[i] + intercept)) ** 2, 0);
+    const rSquared = 1 - (ssRes / ssTotal);
+
+    const correlation = Math.sqrt(Math.abs(rSquared)) * (slope > 0 ? 1 : -1);
+
+    return { slope, intercept, correlation, rSquared };
+  };
+
+  // Generate prediction data
+  const prediction = useMemo(() => {
+    if (!selectedAnalysis || !records.length) return null;
+
+    const [type, field1, field2] = selectedAnalysis.split('-');
+    if (type !== 'scatter') return null;
+
+    const validData = records
+      .map(r => ({
+        x: Number(r.data[field1]),
+        y: Number(r.data[field2])
+      }))
+      .filter(d => !isNaN(d.x) && !isNaN(d.y));
+
+    if (validData.length < 2) return null;
+
+    const xData = validData.map(d => d.x);
+    const yData = validData.map(d => d.y);
+    const { slope, intercept, correlation, rSquared } = calculateRegression(xData, yData);
+
+    const avgX = xData.reduce((a, b) => a + b, 0) / xData.length;
+    const predictionValue = slope * (avgX * 1.2) + intercept;
+
+    return {
+      formula: `${field2} = ${intercept.toFixed(2)} + ${slope.toFixed(4)} * ${field1}`,
+      correlation,
+      rSquared,
+      prediction: `With ${field1} = ${(avgX * 1.2).toFixed(2)}: ${field2} ≈ ${predictionValue.toFixed(2)}`
+    };
+  }, [selectedAnalysis, records]);
 
   const COLORS = ['hsl(var(--neon-green))', 'hsl(var(--neon-blue))', 'hsl(var(--neon-purple))', 'hsl(var(--neon-orange))'];
 
-  const predictGPA = () => {
-    // Simple linear regression simulation
-    const correlation = 0.85; // Mock correlation coefficient
-    const prediction = {
-      formula: "GPA = 2.1 + 0.06 * HoursStudied",
-      correlation: correlation,
-      rSquared: correlation * correlation,
-      prediction: "With 35 hours/week: 4.2 GPA expected",
-    };
-    
-    return prediction;
-  };
-
-  const prediction = predictGPA();
-
   const renderChart = () => {
-    switch (selectedAnalysis) {
-      case "gpa-hours":
+    if (!selectedAnalysis || !records.length) {
+      return <div className="flex items-center justify-center h-full text-muted-foreground">No data available</div>;
+    }
+
+    const [type, field1, field2] = selectedAnalysis.split('-');
+
+    switch (type) {
+      case "scatter": {
+        const scatterData = records
+          .map((r, idx) => ({
+            x: Number(r.data[field1]),
+            y: Number(r.data[field2]),
+            name: `Point ${idx + 1}`
+          }))
+          .filter(d => !isNaN(d.x) && !isNaN(d.y));
+
         return (
-          <ScatterChart data={gpaHoursData}>
+          <ScatterChart data={scatterData}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis 
-              dataKey="hoursStudied" 
+              dataKey="x" 
               stroke="hsl(var(--foreground))"
+              label={{ value: field1, position: 'insideBottom', offset: -5 }}
             />
             <YAxis 
-              dataKey="gpa"
+              dataKey="y"
               stroke="hsl(var(--foreground))"
+              label={{ value: field2, angle: -90, position: 'insideLeft' }}
             />
             <Tooltip 
               contentStyle={{ 
@@ -93,10 +173,26 @@ export const AnalyticsDashboard = () => {
                 borderRadius: '8px'
               }}
             />
-            <Scatter dataKey="gpa" fill="hsl(var(--neon-green))" />
+            <Scatter dataKey="y" fill="hsl(var(--neon-green))" />
           </ScatterChart>
         );
-      case "major-distribution":
+      }
+
+      case "pie": {
+        const distribution = records.reduce((acc, record) => {
+          const value = String(record.data[field1] || 'Unknown');
+          acc[value] = (acc[value] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+        const pieData = Object.entries(distribution)
+          .map(([name, value]) => ({
+            name,
+            value,
+            percentage: ((value / records.length) * 100).toFixed(1),
+          }))
+          .slice(0, 10); // Limit to top 10 categories
+
         return (
           <PieChart>
             <Pie
@@ -106,6 +202,7 @@ export const AnalyticsDashboard = () => {
               outerRadius={120}
               fill="#8884d8"
               dataKey="value"
+              label={(entry: any) => `${entry.name}: ${entry.percentage}%`}
             >
               {pieData.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -120,17 +217,41 @@ export const AnalyticsDashboard = () => {
             />
           </PieChart>
         );
-      case "age-performance":
+      }
+
+      case "bar": {
+        const grouped = records.reduce((acc, record) => {
+          const category = String(record.data[field1] || 'Unknown');
+          const value = Number(record.data[field2]);
+          
+          if (!isNaN(value)) {
+            if (!acc[category]) acc[category] = { total: 0, count: 0 };
+            acc[category].total += value;
+            acc[category].count += 1;
+          }
+          return acc;
+        }, {} as Record<string, { total: number; count: number }>);
+
+        const barData = Object.entries(grouped)
+          .map(([category, data]) => ({
+            category,
+            average: parseFloat((data.total / data.count).toFixed(2)),
+          }))
+          .slice(0, 15); // Limit to top 15 categories
+
         return (
-          <ScatterChart data={ageGpaData}>
+          <BarChart data={barData}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis 
-              dataKey="age" 
+              dataKey="category" 
               stroke="hsl(var(--foreground))"
+              angle={-45}
+              textAnchor="end"
+              height={100}
             />
             <YAxis 
-              dataKey="gpa"
               stroke="hsl(var(--foreground))"
+              label={{ value: `Avg ${field2}`, angle: -90, position: 'insideLeft' }}
             />
             <Tooltip 
               contentStyle={{ 
@@ -139,34 +260,33 @@ export const AnalyticsDashboard = () => {
                 borderRadius: '8px'
               }}
             />
-            <Scatter dataKey="gpa" fill="hsl(var(--neon-blue))" />
-          </ScatterChart>
-        );
-      case "major-comparison":
-        return (
-          <BarChart data={majorAvgGpa}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-            <XAxis 
-              dataKey="major" 
-              stroke="hsl(var(--foreground))"
-            />
-            <YAxis 
-              stroke="hsl(var(--foreground))"
-            />
-            <Tooltip 
-              contentStyle={{ 
-                backgroundColor: 'hsl(var(--card))', 
-                border: '1px solid hsl(var(--border))',
-                borderRadius: '8px'
-              }}
-            />
-            <Bar dataKey="avgGpa" fill="hsl(var(--neon-purple))" />
+            <Bar dataKey="average" fill="hsl(var(--neon-purple))" />
           </BarChart>
         );
+      }
+
       default:
         return null;
     }
   };
+
+  const currentOption = analysisOptions.find(opt => opt.value === selectedAnalysis);
+
+  if (records.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">No data available. Please import data first.</p>
+      </div>
+    );
+  }
+
+  if (analysisOptions.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Not enough data fields for analytics. Need at least one numeric or categorical field.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -178,7 +298,7 @@ export const AnalyticsDashboard = () => {
             <span>Predictive Analytics Dashboard</span>
           </CardTitle>
           <CardDescription>
-            Machine learning insights and data visualizations
+            Machine learning insights and data visualizations for {records.length} records
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -188,14 +308,18 @@ export const AnalyticsDashboard = () => {
                 <SelectValue placeholder="Select analysis type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="gpa-hours">GPA vs Study Hours</SelectItem>
-                <SelectItem value="major-distribution">Major Distribution</SelectItem>
-                <SelectItem value="age-performance">Age vs Performance</SelectItem>
-                <SelectItem value="major-comparison">Major Comparison</SelectItem>
+                {analysisOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             
-            <Button className="flex items-center space-x-2">
+            <Button 
+              className="flex items-center space-x-2"
+              onClick={() => toast.info("Report generation coming soon!")}
+            >
               <TrendingUp className="h-4 w-4" />
               <span>Generate Report</span>
             </Button>
@@ -209,16 +333,8 @@ export const AnalyticsDashboard = () => {
         <Card className="bg-card/50 backdrop-blur lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
-              {selectedAnalysis === "gpa-hours" && <ScatterIcon className="h-5 w-5" />}
-              {selectedAnalysis === "major-distribution" && <PieChartIcon className="h-5 w-5" />}
-              {selectedAnalysis === "age-performance" && <ScatterIcon className="h-5 w-5" />}
-              {selectedAnalysis === "major-comparison" && <BarChart3 className="h-5 w-5" />}
-              <span>
-                {selectedAnalysis === "gpa-hours" && "GPA vs Study Hours Correlation"}
-                {selectedAnalysis === "major-distribution" && "Student Major Distribution"}
-                {selectedAnalysis === "age-performance" && "Age vs Academic Performance"}
-                {selectedAnalysis === "major-comparison" && "Average GPA by Major"}
-              </span>
+              {currentOption && <currentOption.icon className="h-5 w-5" />}
+              <span>{currentOption?.label || "Analysis"}</span>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -231,83 +347,93 @@ export const AnalyticsDashboard = () => {
         </Card>
 
         {/* ML Prediction Model */}
-        <Card className="bg-card/50 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Brain className="h-5 w-5 text-neon-green" />
-              <span>ML Prediction Model</span>
-            </CardTitle>
-            <CardDescription>Linear regression analysis</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Model Type:</span>
-                <span className="font-mono text-sm">Linear Regression</span>
+        {prediction && (
+          <Card className="bg-card/50 backdrop-blur">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Brain className="h-5 w-5 text-neon-green" />
+                <span>ML Prediction Model</span>
+              </CardTitle>
+              <CardDescription>Linear regression analysis</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">Model Type:</span>
+                  <span className="font-mono text-sm">Linear Regression</span>
+                </div>
+                <div className="flex justify-between flex-col gap-1">
+                  <span className="text-sm text-muted-foreground">Formula:</span>
+                  <span className="font-mono text-xs text-neon-green break-all">{prediction.formula}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">Correlation:</span>
+                  <span className="font-mono text-sm">{prediction.correlation.toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">R²:</span>
+                  <span className="font-mono text-sm">{prediction.rSquared.toFixed(3)}</span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Formula:</span>
-                <span className="font-mono text-sm text-neon-green">{prediction.formula}</span>
+              
+              <div className="mt-4 p-3 bg-neon-green/10 rounded-lg border border-neon-green/20">
+                <p className="text-sm font-medium text-neon-green">Prediction:</p>
+                <p className="text-sm">{prediction.prediction}</p>
               </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Correlation:</span>
-                <span className="font-mono text-sm">{prediction.correlation.toFixed(3)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">R²:</span>
-                <span className="font-mono text-sm">{prediction.rSquared.toFixed(3)}</span>
-              </div>
-            </div>
-            
-            <div className="mt-4 p-3 bg-neon-green/10 rounded-lg border border-neon-green/20">
-              <p className="text-sm font-medium text-neon-green">Prediction:</p>
-              <p className="text-sm">{prediction.prediction}</p>
-            </div>
-            
-            <Button className="w-full" variant="outline">
-              Train New Model
-            </Button>
-          </CardContent>
-        </Card>
+              
+              <Button 
+                className="w-full" 
+                variant="outline"
+                onClick={() => toast.info("Model training coming soon!")}
+              >
+                Train New Model
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Key Insights */}
         <Card className="bg-card/50 backdrop-blur">
           <CardHeader>
-            <CardTitle>Key Insights</CardTitle>
-            <CardDescription>AI-generated analysis summary</CardDescription>
+            <CardTitle>Data Summary</CardTitle>
+            <CardDescription>Key statistics</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-start space-x-3">
               <div className="h-2 w-2 bg-neon-green rounded-full mt-2"></div>
               <div>
-                <p className="text-sm font-medium">Strong Correlation</p>
-                <p className="text-xs text-muted-foreground">Study hours positively correlate with GPA (r=0.85)</p>
+                <p className="text-sm font-medium">Total Records</p>
+                <p className="text-xs text-muted-foreground">{records.length} data points analyzed</p>
               </div>
             </div>
             
             <div className="flex items-start space-x-3">
               <div className="h-2 w-2 bg-neon-blue rounded-full mt-2"></div>
               <div>
-                <p className="text-sm font-medium">Top Performers</p>
-                <p className="text-xs text-muted-foreground">Physics majors show highest average GPA</p>
+                <p className="text-sm font-medium">Numeric Fields</p>
+                <p className="text-xs text-muted-foreground">{numericFields.length} fields available for analysis</p>
               </div>
             </div>
             
             <div className="flex items-start space-x-3">
               <div className="h-2 w-2 bg-neon-purple rounded-full mt-2"></div>
               <div>
-                <p className="text-sm font-medium">Age Distribution</p>
-                <p className="text-xs text-muted-foreground">No significant age-performance correlation</p>
+                <p className="text-sm font-medium">Categorical Fields</p>
+                <p className="text-xs text-muted-foreground">{categoricalFields.length} fields for grouping</p>
               </div>
             </div>
             
-            <div className="flex items-start space-x-3">
-              <div className="h-2 w-2 bg-neon-orange rounded-full mt-2"></div>
-              <div>
-                <p className="text-sm font-medium">Outlier Detection</p>
-                <p className="text-xs text-muted-foreground">2 students may need academic support</p>
+            {prediction && (
+              <div className="flex items-start space-x-3">
+                <div className="h-2 w-2 bg-neon-orange rounded-full mt-2"></div>
+                <div>
+                  <p className="text-sm font-medium">Model Accuracy</p>
+                  <p className="text-xs text-muted-foreground">
+                    {prediction.rSquared > 0.7 ? 'Strong' : prediction.rSquared > 0.4 ? 'Moderate' : 'Weak'} correlation detected (R² = {prediction.rSquared.toFixed(3)})
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
