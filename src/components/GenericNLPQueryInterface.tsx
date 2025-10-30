@@ -53,68 +53,104 @@ export const GenericNLPQueryInterface = () => {
       // Apply the AI's interpretation to filter/process the data
       let filteredData = records.map(r => r.data);
       let sqlQuery = "";
+      let sqlParts: string[] = [];
       
-      const { operation, field, condition, value, limit, interpretation } = aiResponse;
+      const { operations, interpretation } = aiResponse;
       
-      // Generate SQL representation
-      if (operation === "filter" && field && condition && value !== null) {
-        const operators: Record<string, string> = {
-          gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", contains: "ILIKE"
-        };
-        const op = operators[condition] || "=";
-        const sqlValue = condition === "contains" ? `'%${value}%'` : value;
-        sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} ${op} ${sqlValue};`;
-        
-        // Apply filter
-        filteredData = filteredData.filter((r: any) => {
-          const fieldValue = r[field];
-          if (condition === "gt") return fieldValue > value;
-          if (condition === "lt") return fieldValue < value;
-          if (condition === "gte") return fieldValue >= value;
-          if (condition === "lte") return fieldValue <= value;
-          if (condition === "eq") return fieldValue == value;
-          if (condition === "contains") return String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
-          return true;
-        });
-      } else if (operation === "aggregate" && field && condition) {
-        const values = filteredData.map((r: any) => r[field]).filter((v: any) => typeof v === 'number');
-        let result = 0;
-        
-        if (condition === "avg") {
-          result = values.reduce((sum: number, v: number) => sum + v, 0) / values.length;
-          sqlQuery = `SELECT AVG(${field}) as average FROM ${recordType};`;
-        } else if (condition === "sum") {
-          result = values.reduce((sum: number, v: number) => sum + v, 0);
-          sqlQuery = `SELECT SUM(${field}) as total FROM ${recordType};`;
-        } else if (condition === "max") {
-          result = Math.max(...values);
-          sqlQuery = `SELECT MAX(${field}) as maximum FROM ${recordType};`;
-        } else if (condition === "min") {
-          result = Math.min(...values);
-          sqlQuery = `SELECT MIN(${field}) as minimum FROM ${recordType};`;
+      if (!operations || operations.length === 0) {
+        sqlQuery = `SELECT * FROM ${recordType};`;
+      } else {
+        // Process operations in sequence
+        for (const op of operations) {
+          const { type, field, condition, value } = op;
+          
+          if (type === "filter" && field && condition && value !== null) {
+            const operators: Record<string, string> = {
+              gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", contains: "ILIKE"
+            };
+            const sqlOp = operators[condition] || "=";
+            const sqlValue = condition === "contains" ? `'%${value}%'` : 
+                           typeof value === 'string' ? `'${value}'` : value;
+            sqlParts.push(`${field} ${sqlOp} ${sqlValue}`);
+            
+            // Apply filter
+            filteredData = filteredData.filter((r: any) => {
+              const fieldValue = r[field];
+              if (condition === "gt") return fieldValue > value;
+              if (condition === "lt") return fieldValue < value;
+              if (condition === "gte") return fieldValue >= value;
+              if (condition === "lte") return fieldValue <= value;
+              if (condition === "eq") return fieldValue == value;
+              if (condition === "contains") return String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+              return true;
+            });
+          } else if (type === "sort" && field) {
+            const direction = condition === "asc" ? "ASC" : "DESC";
+            sqlParts.push(`ORDER BY ${field} ${direction}`);
+            
+            filteredData = filteredData.sort((a: any, b: any) => {
+              const aVal = a[field];
+              const bVal = b[field];
+              const comparison = typeof aVal === 'number' ? aVal - bVal : String(aVal).localeCompare(String(bVal));
+              return condition === "asc" ? comparison : -comparison;
+            });
+          } else if (type === "limit" && value) {
+            sqlParts.push(`LIMIT ${value}`);
+            filteredData = filteredData.slice(0, Number(value));
+          } else if (type === "groupby" && field) {
+            // Group by aggregation
+            const grouped = new Map<string, number>();
+            filteredData.forEach((r: any) => {
+              const key = String(r[field] || 'Unknown');
+              grouped.set(key, (grouped.get(key) || 0) + 1);
+            });
+            
+            filteredData = Array.from(grouped.entries()).map(([key, count]) => ({
+              [field]: key,
+              count: count
+            }));
+            
+            if (condition === "count") {
+              sqlParts.push(`GROUP BY ${field}`);
+              sqlQuery = `SELECT ${field}, COUNT(*) as count FROM ${recordType} ${sqlParts.join(" ")};`;
+            }
+          } else if (type === "aggregate" && field && condition) {
+            const values = filteredData.map((r: any) => r[field]).filter((v: any) => typeof v === 'number');
+            let result = 0;
+            
+            if (condition === "avg") {
+              result = values.reduce((sum: number, v: number) => sum + v, 0) / (values.length || 1);
+              sqlQuery = `SELECT AVG(${field}) as average FROM ${recordType};`;
+            } else if (condition === "sum") {
+              result = values.reduce((sum: number, v: number) => sum + v, 0);
+              sqlQuery = `SELECT SUM(${field}) as total FROM ${recordType};`;
+            } else if (condition === "max") {
+              result = Math.max(...values);
+              sqlQuery = `SELECT MAX(${field}) as maximum FROM ${recordType};`;
+            } else if (condition === "min") {
+              result = Math.min(...values);
+              sqlQuery = `SELECT MIN(${field}) as minimum FROM ${recordType};`;
+            } else if (condition === "count") {
+              result = filteredData.length;
+              sqlQuery = `SELECT COUNT(*) as count FROM ${recordType};`;
+            }
+            
+            filteredData = [{ [field]: parseFloat(result.toFixed(2)), description: `${condition.toUpperCase()} of ${field}` }];
+          }
         }
         
-        filteredData = [{ [field]: parseFloat(result.toFixed(2)), description: `${condition.toUpperCase()} of ${field}` }];
-      } else if (operation === "count") {
-        const count = filteredData.length;
-        sqlQuery = `SELECT COUNT(*) as total FROM ${recordType};`;
-        filteredData = [{ total: count, description: `Total ${recordType}` }];
-      } else if (operation === "sort" && field) {
-        sqlQuery = `SELECT * FROM ${recordType} ORDER BY ${field} DESC${limit ? ` LIMIT ${limit}` : ""};`;
-        filteredData = filteredData.sort((a: any, b: any) => {
-          const aVal = a[field];
-          const bVal = b[field];
-          return typeof aVal === 'number' ? bVal - aVal : String(bVal).localeCompare(String(aVal));
-        });
-        if (limit) filteredData = filteredData.slice(0, limit);
-      } else if (operation === "search" && field && value) {
-        sqlQuery = `SELECT * FROM ${recordType} WHERE ${field} ILIKE '%${value}%';`;
-        filteredData = filteredData.filter((r: any) => 
-          String(r[field] || '').toLowerCase().includes(String(value).toLowerCase())
-        );
-      } else {
-        // Show all
-        sqlQuery = `SELECT * FROM ${recordType};`;
+        // Build final SQL if not already set
+        if (!sqlQuery) {
+          const whereClauses = sqlParts.filter(p => !p.startsWith('ORDER') && !p.startsWith('LIMIT'));
+          const orderClause = sqlParts.find(p => p.startsWith('ORDER'));
+          const limitClause = sqlParts.find(p => p.startsWith('LIMIT'));
+          
+          sqlQuery = `SELECT * FROM ${recordType}`;
+          if (whereClauses.length > 0) sqlQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+          if (orderClause) sqlQuery += ` ${orderClause}`;
+          if (limitClause) sqlQuery += ` ${limitClause}`;
+          sqlQuery += ';';
+        }
       }
       
       const executionTime = performance.now() - startTime;

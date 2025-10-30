@@ -18,33 +18,13 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const systemPrompt = `You are a data analysis AI that helps users query their data using natural language.
+    const systemPrompt = `You are a data analysis AI that analyzes natural language queries about data.
 
-Given:
-- Record type: ${recordType}
-- Schema (available fields): ${schema.join(", ")}
-- Sample data: ${JSON.stringify(sampleData.slice(0, 3))}
+Available fields: ${schema.join(", ")}
+Sample data: ${JSON.stringify(sampleData.slice(0, 2))}
+Record type: ${recordType}
 
-Your task is to:
-1. Understand the user's natural language query
-2. Determine what filtering, aggregation, or analysis they want
-3. Return a structured response with:
-   - interpretation: A brief explanation of what you understood
-   - operation: The type of operation (filter, aggregate, count, sort, search)
-   - field: The primary field being queried (if applicable)
-   - condition: The condition to apply (if applicable)
-   - value: The value to compare against (if applicable)
-   - limit: Number of results to return (if applicable)
-
-Respond ONLY with valid JSON in this exact format:
-{
-  "interpretation": "string explaining what you understood",
-  "operation": "filter|aggregate|count|sort|search|all",
-  "field": "field_name or null",
-  "condition": "gt|lt|gte|lte|eq|contains|avg|sum|max|min|null",
-  "value": "value or null",
-  "limit": number or null
-}`;
+Interpret the user's query and determine what operations are needed.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -58,7 +38,36 @@ Respond ONLY with valid JSON in this exact format:
           { role: "system", content: systemPrompt },
           { role: "user", content: query }
         ],
-        temperature: 0.3,
+        temperature: 0.1,
+        tools: [{
+          type: "function",
+          function: {
+            name: "analyze_query",
+            description: "Analyze the natural language query and return structured query parameters",
+            parameters: {
+              type: "object",
+              properties: {
+                interpretation: { type: "string", description: "Brief explanation of what was understood" },
+                operations: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      type: { type: "string", enum: ["filter", "sort", "aggregate", "groupby", "limit"] },
+                      field: { type: "string", description: "Field name to operate on" },
+                      condition: { type: "string", enum: ["gt", "lt", "gte", "lte", "eq", "contains", "avg", "sum", "max", "min", "count", "asc", "desc"] },
+                      value: { description: "Value for comparison or limit number" }
+                    },
+                    required: ["type"]
+                  }
+                }
+              },
+              required: ["interpretation", "operations"],
+              additionalProperties: false
+            }
+          }
+        }],
+        tool_choice: { type: "function", function: { name: "analyze_query" } }
       }),
     });
 
@@ -81,15 +90,13 @@ Respond ONLY with valid JSON in this exact format:
     }
 
     const aiResponse = await response.json();
-    const content = aiResponse.choices[0].message.content;
+    const toolCall = aiResponse.choices[0].message.tool_calls?.[0];
     
-    // Extract JSON from the response (in case AI adds extra text)
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    if (!toolCall || !toolCall.function.arguments) {
       throw new Error("Invalid AI response format");
     }
     
-    const parsedResponse = JSON.parse(jsonMatch[0]);
+    const parsedResponse = JSON.parse(toolCall.function.arguments);
     
     return new Response(
       JSON.stringify(parsedResponse),
