@@ -2,14 +2,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { TrendingUp, BarChart3, Target as ScatterIcon, PieChart as PieChartIcon, Brain } from "lucide-react";
+import { TrendingUp, BarChart3, Target as ScatterIcon, PieChart as PieChartIcon, Brain, Save, Bookmark } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useDataStore } from "@/hooks/useDataStore";
 import { toast } from "sonner";
+import { useSavedAnalytics } from "@/hooks/useSavedAnalytics";
+import { SaveAnalyticsDialog } from "./SaveAnalyticsDialog";
+import { SavedAnalyticsList } from "./SavedAnalyticsList";
 
 export const AnalyticsDashboard = () => {
   const { records, schema } = useDataStore();
+  const { savedAnalytics, saveAnalytic, deleteAnalytic } = useSavedAnalytics();
   const [selectedAnalysis, setSelectedAnalysis] = useState<string>("");
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
 
   // Auto-detect field types
   const { numericFields, categoricalFields } = useMemo(() => {
@@ -422,7 +427,7 @@ export const AnalyticsDashboard = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
             <Select value={selectedAnalysis} onValueChange={setSelectedAnalysis}>
               <SelectTrigger className="w-64">
                 <SelectValue placeholder="Select analysis type" />
@@ -436,16 +441,38 @@ export const AnalyticsDashboard = () => {
               </SelectContent>
             </Select>
             
-            <Button 
-              className="flex items-center space-x-2"
-              onClick={() => toast.info("Report generation coming soon!")}
-            >
-              <TrendingUp className="h-4 w-4" />
-              <span>Generate Report</span>
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline"
+                className="flex items-center space-x-2"
+                onClick={() => setSaveDialogOpen(true)}
+                disabled={!selectedAnalysis}
+              >
+                <Save className="h-4 w-4" />
+                <span>Save Current</span>
+              </Button>
+              <Button 
+                className="flex items-center space-x-2"
+                onClick={() => toast.info("Report generation coming soon!")}
+              >
+                <TrendingUp className="h-4 w-4" />
+                <span>Generate Report</span>
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Saved Analytics List */}
+      <SavedAnalyticsList
+        savedAnalytics={savedAnalytics}
+        onLoad={(analytic) => {
+          const analysisValue = `${analytic.analysis_type}-${analytic.field1}${analytic.field2 ? `-${analytic.field2}` : ''}`;
+          setSelectedAnalysis(analysisValue);
+          toast.success(`Loaded: ${analytic.name}`);
+        }}
+        onDelete={deleteAnalytic}
+      />
 
       {/* Analytics Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -618,6 +645,27 @@ export const AnalyticsDashboard = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Save Analytics Dialog */}
+      {selectedAnalysis && (
+        <SaveAnalyticsDialog
+          open={saveDialogOpen}
+          onOpenChange={setSaveDialogOpen}
+          analysisType={selectedAnalysis.split('-')[0]}
+          field1={selectedAnalysis.split('-')[1]}
+          field2={selectedAnalysis.split('-')[2]}
+          onSave={async (name, description) => {
+            const [type, field1, field2] = selectedAnalysis.split('-');
+            await saveAnalytic({
+              name,
+              description,
+              analysis_type: type,
+              field1,
+              field2,
+            });
+          }}
+        />
+      )}
     </div>
   );
 };
