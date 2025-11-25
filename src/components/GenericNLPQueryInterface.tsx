@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Brain, ArrowRight, Lightbulb, MessageSquare } from "lucide-react";
+import { Brain, ArrowRight, Lightbulb, MessageSquare, Database } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDataStore } from "@/hooks/useDataStore";
 import { supabase } from "@/integrations/supabase/client";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 interface NLPResult {
   naturalQuery: string;
@@ -22,23 +24,84 @@ export const GenericNLPQueryInterface = () => {
   const [naturalQuery, setNaturalQuery] = useState("");
   const [result, setResult] = useState<NLPResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [availableTables, setAvailableTables] = useState<string[]>([]);
+  const [selectedTables, setSelectedTables] = useState<string[]>([]);
+  const [allRecords, setAllRecords] = useState<Record<string, any[]>>({});
+  
+  useEffect(() => {
+    fetchAvailableTables();
+  }, []);
+  
+  useEffect(() => {
+    if (recordType && !selectedTables.includes(recordType)) {
+      setSelectedTables([recordType]);
+    }
+  }, [recordType]);
+  
+  const fetchAvailableTables = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('data_records')
+        .select('record_type')
+        .order('record_type');
+      
+      if (error) throw error;
+      
+      const uniqueTypes = Array.from(new Set(data.map(r => r.record_type)));
+      setAvailableTables(uniqueTypes);
+      
+      // Fetch all records for each table
+      const recordsMap: Record<string, any[]> = {};
+      for (const type of uniqueTypes) {
+        const { data: typeData } = await supabase
+          .from('data_records')
+          .select('*')
+          .eq('record_type', type);
+        if (typeData) {
+          recordsMap[type] = typeData;
+        }
+      }
+      setAllRecords(recordsMap);
+    } catch (error) {
+      console.error('Error fetching tables:', error);
+    }
+  };
+  
+  const toggleTable = (table: string) => {
+    setSelectedTables(prev => 
+      prev.includes(table) ? prev.filter(t => t !== table) : [...prev, table]
+    );
+  };
 
   const processNaturalLanguageQuery = async () => {
-    if (!naturalQuery.trim() || records.length === 0) return;
+    if (!naturalQuery.trim()) return;
+    
+    const tablesToQuery = selectedTables.length > 0 ? selectedTables : [recordType];
+    if (tablesToQuery.length === 0) return;
     
     setIsProcessing(true);
     const startTime = performance.now();
     
     try {
-      // Call the AI edge function to interpret the query
-      const sampleData = records.slice(0, 5).map(r => r.data);
+      // Prepare data for all selected tables
+      const tablesData: Record<string, any> = {};
+      const tablesSchema: Record<string, string[]> = {};
       
+      for (const table of tablesToQuery) {
+        const tableRecords = allRecords[table] || [];
+        if (tableRecords.length > 0) {
+          tablesData[table] = tableRecords.slice(0, 3).map(r => r.data);
+          tablesSchema[table] = Object.keys(tableRecords[0].data || {});
+        }
+      }
+      
+      // Call the AI edge function with multi-table support
       const { data: aiResponse, error: functionError } = await supabase.functions.invoke('nlp-query', {
         body: {
           query: naturalQuery,
-          schema,
-          sampleData,
-          recordType
+          tables: tablesData,
+          schemas: tablesSchema,
+          isMultiTable: tablesToQuery.length > 1
         }
       });
 
@@ -51,15 +114,42 @@ export const GenericNLPQueryInterface = () => {
       }
 
       // Apply the AI's interpretation to filter/process the data
-      let filteredData = records.map(r => r.data);
-      let sqlQuery = "";
+      const { operations, interpretation, sqlQuery: aiGeneratedSQL, joins } = aiResponse;
+      
+      let filteredData: any[] = [];
+      let sqlQuery = aiGeneratedSQL || "";
       let sqlParts: string[] = [];
       
-      const { operations, interpretation } = aiResponse;
-      
-      if (!operations || operations.length === 0) {
-        sqlQuery = `SELECT * FROM ${recordType};`;
+      // If multi-table query with joins, handle differently
+      if (joins && joins.length > 0) {
+        // For multi-table queries, combine data based on joins
+        const primaryTable = tablesToQuery[0];
+        filteredData = (allRecords[primaryTable] || []).map(r => r.data);
+        
+        // Apply join logic (simplified - in real DB this would be done by SQL)
+        for (const join of joins) {
+          const { fromTable, toTable, fromField, toField } = join;
+          const secondaryData = (allRecords[toTable] || []).map(r => r.data);
+          
+          filteredData = filteredData.map(record => {
+            const matchingRecord = secondaryData.find(
+              sr => sr[toField] === record[fromField]
+            );
+            return matchingRecord ? { ...record, ...matchingRecord } : record;
+          });
+        }
       } else {
+        // Single table query
+        const primaryTable = tablesToQuery[0];
+        filteredData = (allRecords[primaryTable] || []).map(r => r.data);
+      }
+      
+      if (!sqlQuery) {
+        if (!operations || operations.length === 0) {
+          sqlQuery = tablesToQuery.length === 1 
+            ? `SELECT * FROM ${tablesToQuery[0]};`
+            : `SELECT * FROM ${tablesToQuery.join(', ')};`;
+        } else {
         // Process operations in sequence
         for (const op of operations) {
           const { type, field, condition, value } = op;
@@ -112,40 +202,43 @@ export const GenericNLPQueryInterface = () => {
             
             if (condition === "count") {
               sqlParts.push(`GROUP BY ${field}`);
-              sqlQuery = `SELECT ${field}, COUNT(*) as count FROM ${recordType} ${sqlParts.join(" ")};`;
+              const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
+              sqlQuery = `SELECT ${field}, COUNT(*) as count FROM ${fromClause} ${sqlParts.join(" ")};`;
             }
           } else if (type === "aggregate" && field && condition) {
             const values = filteredData.map((r: any) => r[field]).filter((v: any) => typeof v === 'number');
             let result = 0;
             
+            const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
+            
             if (condition === "avg") {
               result = values.reduce((sum: number, v: number) => sum + v, 0) / (values.length || 1);
-              sqlQuery = `SELECT AVG(${field}) as average FROM ${recordType};`;
+              sqlQuery = `SELECT AVG(${field}) as average FROM ${fromClause};`;
             } else if (condition === "sum") {
               result = values.reduce((sum: number, v: number) => sum + v, 0);
-              sqlQuery = `SELECT SUM(${field}) as total FROM ${recordType};`;
+              sqlQuery = `SELECT SUM(${field}) as total FROM ${fromClause};`;
             } else if (condition === "max") {
               result = Math.max(...values);
-              sqlQuery = `SELECT MAX(${field}) as maximum FROM ${recordType};`;
+              sqlQuery = `SELECT MAX(${field}) as maximum FROM ${fromClause};`;
             } else if (condition === "min") {
               result = Math.min(...values);
-              sqlQuery = `SELECT MIN(${field}) as minimum FROM ${recordType};`;
+              sqlQuery = `SELECT MIN(${field}) as minimum FROM ${fromClause};`;
             } else if (condition === "count") {
               result = filteredData.length;
-              sqlQuery = `SELECT COUNT(*) as count FROM ${recordType};`;
+              sqlQuery = `SELECT COUNT(*) as count FROM ${fromClause};`;
             }
             
             filteredData = [{ [field]: parseFloat(result.toFixed(2)), description: `${condition.toUpperCase()} of ${field}` }];
           }
         }
         
-        // Build final SQL if not already set
-        if (!sqlQuery) {
+          // Build final SQL if not already set
           const whereClauses = sqlParts.filter(p => !p.startsWith('ORDER') && !p.startsWith('LIMIT'));
           const orderClause = sqlParts.find(p => p.startsWith('ORDER'));
           const limitClause = sqlParts.find(p => p.startsWith('LIMIT'));
           
-          sqlQuery = `SELECT * FROM ${recordType}`;
+          const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
+          sqlQuery = `SELECT * FROM ${fromClause}`;
           if (whereClauses.length > 0) sqlQuery += ` WHERE ${whereClauses.join(' AND ')}`;
           if (orderClause) sqlQuery += ` ${orderClause}`;
           if (limitClause) sqlQuery += ` ${limitClause}`;
@@ -181,35 +274,51 @@ export const GenericNLPQueryInterface = () => {
   };
 
   const generateSampleQueries = () => {
-    if (records.length === 0) return ["Import data first to see sample queries"];
+    const tables = selectedTables.length > 0 ? selectedTables : [recordType];
+    if (tables.length === 0 || !allRecords[tables[0]]?.length) {
+      return ["Import data first to see sample queries"];
+    }
     
-    const numericFields = schema.filter(field => {
-      const sample = records[0]?.data[field];
-      return typeof sample === 'number';
-    });
+    const queries: string[] = [];
     
-    const textFields = schema.filter(field => {
-      const sample = records[0]?.data[field];
-      return typeof sample === 'string';
-    });
-
-    const queries = [
-      `How many ${recordType} are there?`,
-      `Show me all ${recordType}`,
-    ];
-
-    if (numericFields.length > 0) {
+    // Single table queries
+    if (tables.length === 1) {
+      const table = tables[0];
+      const sampleRecord = allRecords[table]?.[0]?.data;
+      if (!sampleRecord) return queries;
+      
+      const numericFields = Object.keys(sampleRecord).filter(field => 
+        typeof sampleRecord[field] === 'number'
+      );
+      const textFields = Object.keys(sampleRecord).filter(field => 
+        typeof sampleRecord[field] === 'string'
+      );
+      
       queries.push(
-        `Show ${recordType} with ${numericFields[0]} above 50`,
-        `What's the average ${numericFields[0]}?`,
-        `Show me the top 5 ${recordType} by ${numericFields[0]}`
+        `How many ${table} are there?`,
+        `Show me all ${table}`
+      );
+      
+      if (numericFields.length > 0) {
+        queries.push(
+          `What's the average ${numericFields[0]}?`,
+          `Show top 5 ${table} by ${numericFields[0]}`
+        );
+      }
+      
+      if (textFields.length > 0) {
+        queries.push(`Find ${table} where ${textFields[0]} contains "test"`);
+      }
+    } else {
+      // Multi-table queries
+      queries.push(
+        `Show data from ${tables.join(' and ')}`,
+        `Compare ${tables[0]} with ${tables[1]}`,
+        `Find matching records between ${tables.join(' and ')}`,
+        `What's the relationship between ${tables.join(' and ')}?`
       );
     }
-
-    if (textFields.length > 0) {
-      queries.push(`Find ${recordType} named John`);
-    }
-
+    
     return queries;
   };
 
@@ -217,14 +326,53 @@ export const GenericNLPQueryInterface = () => {
 
   return (
     <div className="space-y-6">
+      {availableTables.length > 1 && (
+        <Card className="bg-card/50 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Database className="h-5 w-5 text-neon-blue" />
+              <span>Select Tables to Query</span>
+            </CardTitle>
+            <CardDescription>
+              Choose multiple tables for advanced cross-table queries
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {availableTables.map((table) => (
+                <div key={table} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={table}
+                    checked={selectedTables.includes(table)}
+                    onCheckedChange={() => toggleTable(table)}
+                  />
+                  <Label
+                    htmlFor={table}
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
+                    {table}
+                    <span className="text-xs text-muted-foreground ml-2">
+                      ({allRecords[table]?.length || 0} records)
+                    </span>
+                  </Label>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
       <Card className="bg-card/50 backdrop-blur terminal-glow">
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <Brain className="h-5 w-5 text-neon-purple" />
-            <span>Natural Language Query</span>
+            <span>Advanced AI Query</span>
           </CardTitle>
           <CardDescription>
-            Ask questions in plain English about your {recordType} data
+            {selectedTables.length > 1 
+              ? `Ask complex questions across ${selectedTables.join(', ')}`
+              : `Ask questions about your ${recordType || 'data'}`
+            }
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -235,20 +383,32 @@ export const GenericNLPQueryInterface = () => {
                 value={naturalQuery}
                 onChange={(e) => setNaturalQuery(e.target.value)}
                 className="flex-1"
-                placeholder={`e.g., Show me all ${recordType}...`}
+                placeholder={
+                  selectedTables.length > 1
+                    ? `e.g., Compare ${selectedTables[0]} and ${selectedTables[1]}...`
+                    : `e.g., Show me all ${recordType || 'records'}...`
+                }
                 onKeyPress={(e) => e.key === 'Enter' && processNaturalLanguageQuery()}
-                disabled={records.length === 0}
+                disabled={availableTables.length === 0}
               />
               <Button
                 onClick={processNaturalLanguageQuery}
-                disabled={isProcessing || !naturalQuery.trim() || records.length === 0}
+                disabled={isProcessing || !naturalQuery.trim() || availableTables.length === 0}
                 className="flex items-center space-x-2"
               >
                 <Brain className="h-4 w-4" />
                 <span>{isProcessing ? "Processing..." : "Ask AI"}</span>
               </Button>
             </div>
-            {records.length === 0 && (
+            {selectedTables.length > 1 && (
+              <div className="bg-muted/20 rounded-lg p-3">
+                <p className="text-sm font-medium text-neon-blue">Multi-Table Mode Active</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  You can ask complex queries like joins, comparisons, and correlations across tables
+                </p>
+              </div>
+            )}
+            {availableTables.length === 0 && (
               <p className="text-sm text-muted-foreground">Import data first to use AI queries</p>
             )}
           </div>
@@ -267,7 +427,7 @@ export const GenericNLPQueryInterface = () => {
         </CardContent>
       </Card>
 
-      {records.length > 0 && (
+      {availableTables.length > 0 && (
         <Card className="bg-card/50 backdrop-blur">
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -284,7 +444,7 @@ export const GenericNLPQueryInterface = () => {
                   variant="outline"
                   className="justify-start text-left h-auto p-3"
                   onClick={() => setNaturalQuery(query)}
-                  disabled={records.length === 0}
+                  disabled={availableTables.length === 0}
                 >
                   {query}
                 </Button>
