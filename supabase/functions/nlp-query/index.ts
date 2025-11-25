@@ -11,18 +11,34 @@ serve(async (req) => {
   }
 
   try {
-    const { query, schema, sampleData, recordType } = await req.json();
+    const { query, tables, schemas, isMultiTable } = await req.json();
     
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const systemPrompt = `You are a data analysis AI that analyzes natural language queries about data.
+    const systemPrompt = isMultiTable 
+      ? `You are an advanced data analysis AI that handles complex multi-table queries.
 
-Available fields: ${schema.join(", ")}
-Sample data: ${JSON.stringify(sampleData.slice(0, 2))}
-Record type: ${recordType}
+Available tables and their schemas:
+${Object.entries(schemas).map(([table, fields]) => 
+  `Table: ${table}\nFields: ${(fields as string[]).join(", ")}\nSample: ${JSON.stringify(tables[table]?.[0] || {})}`
+).join("\n\n")}
+
+You can perform:
+- Cross-table queries with JOINs
+- Complex aggregations across multiple tables
+- Comparative analysis between tables
+- Correlation and relationship discovery
+
+Interpret the user's query and determine what operations and joins are needed.`
+      : `You are a data analysis AI that analyzes natural language queries about data.
+
+Available tables and schemas:
+${Object.entries(schemas).map(([table, fields]) => 
+  `Table: ${table}\nFields: ${(fields as string[]).join(", ")}\nSample: ${JSON.stringify(tables[table]?.[0] || {})}`
+).join("\n\n")}
 
 Interpret the user's query and determine what operations are needed.`;
 
@@ -38,22 +54,38 @@ Interpret the user's query and determine what operations are needed.`;
           { role: "system", content: systemPrompt },
           { role: "user", content: query }
         ],
-        temperature: 0.1,
         tools: [{
           type: "function",
           function: {
             name: "analyze_query",
-            description: "Analyze the natural language query and return structured query parameters",
+            description: "Analyze the natural language query and return structured query parameters for single or multi-table queries",
             parameters: {
               type: "object",
               properties: {
                 interpretation: { type: "string", description: "Brief explanation of what was understood" },
+                sqlQuery: { type: "string", description: "Complete SQL query if multi-table with complex joins" },
+                joins: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      fromTable: { type: "string", description: "Primary table name" },
+                      toTable: { type: "string", description: "Secondary table to join" },
+                      fromField: { type: "string", description: "Field from primary table" },
+                      toField: { type: "string", description: "Field from secondary table" },
+                      joinType: { type: "string", enum: ["INNER", "LEFT", "RIGHT", "FULL"], description: "Type of join" }
+                    },
+                    required: ["fromTable", "toTable", "fromField", "toField"]
+                  },
+                  description: "Join operations for multi-table queries"
+                },
                 operations: {
                   type: "array",
                   items: {
                     type: "object",
                     properties: {
-                      type: { type: "string", enum: ["filter", "sort", "aggregate", "groupby", "limit"] },
+                      type: { type: "string", enum: ["filter", "sort", "aggregate", "groupby", "limit", "join"] },
+                      table: { type: "string", description: "Table name for this operation" },
                       field: { type: "string", description: "Field name to operate on" },
                       condition: { type: "string", enum: ["gt", "lt", "gte", "lte", "eq", "contains", "avg", "sum", "max", "min", "count", "asc", "desc"] },
                       value: { description: "Value for comparison or limit number" }
@@ -62,7 +94,7 @@ Interpret the user's query and determine what operations are needed.`;
                   }
                 }
               },
-              required: ["interpretation", "operations"],
+              required: ["interpretation"],
               additionalProperties: false
             }
           }
