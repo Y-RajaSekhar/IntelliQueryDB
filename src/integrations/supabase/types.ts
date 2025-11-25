@@ -238,6 +238,42 @@ export type Database = {
           },
         ]
       }
+      saved_analytics: {
+        Row: {
+          analysis_type: string
+          config: Json | null
+          created_at: string
+          description: string | null
+          field1: string
+          field2: string | null
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          analysis_type: string
+          config?: Json | null
+          created_at?: string
+          description?: string | null
+          field1: string
+          field2?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          analysis_type?: string
+          config?: Json | null
+          created_at?: string
+          description?: string | null
+          field1?: string
+          field2?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       student_skills: {
         Row: {
           category: string
