@@ -9,6 +9,8 @@ import { useDataStore } from "@/hooks/useDataStore";
 import { supabase } from "@/integrations/supabase/client";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { useQueryHistory } from "@/hooks/useQueryHistory";
+import { QueryHistoryPanel } from "@/components/QueryHistoryPanel";
 
 interface NLPResult {
   naturalQuery: string;
@@ -27,6 +29,16 @@ export const GenericNLPQueryInterface = () => {
   const [availableTables, setAvailableTables] = useState<string[]>([]);
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [allRecords, setAllRecords] = useState<Record<string, any[]>>({});
+  
+  const {
+    history,
+    favorites,
+    loading: historyLoading,
+    addToHistory,
+    toggleFavorite,
+    deleteFromHistory,
+    clearHistory
+  } = useQueryHistory();
   
   useEffect(() => {
     fetchAvailableTables();
@@ -256,6 +268,9 @@ export const GenericNLPQueryInterface = () => {
         executionTime,
       });
       
+      // Add to history after successful query
+      await addToHistory(naturalQuery, tablesToQuery);
+      
       toast({
         title: "AI Query Processed",
         description: interpretation || "Query processed successfully",
@@ -323,9 +338,25 @@ export const GenericNLPQueryInterface = () => {
   };
 
   const sampleQueries = generateSampleQueries();
+  
+  const handleSelectHistoryQuery = (query: string, tables: string[]) => {
+    setNaturalQuery(query);
+    if (tables.length > 0) {
+      setSelectedTables(tables.filter(t => availableTables.includes(t)));
+    }
+  };
 
   return (
     <div className="space-y-6">
+      <QueryHistoryPanel
+        history={history}
+        favorites={favorites}
+        loading={historyLoading}
+        onSelectQuery={handleSelectHistoryQuery}
+        onToggleFavorite={toggleFavorite}
+        onDelete={deleteFromHistory}
+        onClearHistory={clearHistory}
+      />
       {availableTables.length > 1 && (
         <Card className="bg-card/50 backdrop-blur">
           <CardHeader>

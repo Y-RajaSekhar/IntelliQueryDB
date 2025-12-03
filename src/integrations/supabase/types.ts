@@ -238,6 +238,36 @@ export type Database = {
           },
         ]
       }
+      query_history: {
+        Row: {
+          created_at: string
+          execution_count: number
+          id: string
+          is_favorite: boolean
+          last_executed_at: string
+          query_text: string
+          selected_tables: string[]
+        }
+        Insert: {
+          created_at?: string
+          execution_count?: number
+          id?: string
+          is_favorite?: boolean
+          last_executed_at?: string
+          query_text: string
+          selected_tables: string[]
+        }
+        Update: {
+          created_at?: string
+          execution_count?: number
+          id?: string
+          is_favorite?: boolean
+          last_executed_at?: string
+          query_text?: string
+          selected_tables?: string[]
+        }
+        Relationships: []
+      }
       saved_analytics: {
         Row: {
           analysis_type: string
