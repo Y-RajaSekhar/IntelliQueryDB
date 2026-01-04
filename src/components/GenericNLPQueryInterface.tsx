@@ -40,9 +40,10 @@ export const GenericNLPQueryInterface = () => {
     clearHistory
   } = useQueryHistory();
   
+  // Refresh data when records change from the data store
   useEffect(() => {
     fetchAvailableTables();
-  }, []);
+  }, [records]);
   
   useEffect(() => {
     if (recordType && !selectedTables.includes(recordType)) {
