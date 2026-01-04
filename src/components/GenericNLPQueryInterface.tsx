@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Brain, ArrowRight, Lightbulb, MessageSquare, Database } from "lucide-react";
+import { Brain, ArrowRight, Lightbulb, MessageSquare, Database, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDataStore } from "@/hooks/useDataStore";
 import { supabase } from "@/integrations/supabase/client";
@@ -29,6 +29,7 @@ export const GenericNLPQueryInterface = () => {
   const [availableTables, setAvailableTables] = useState<string[]>([]);
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [allRecords, setAllRecords] = useState<Record<string, any[]>>({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   const {
     history,
@@ -73,7 +74,8 @@ export const GenericNLPQueryInterface = () => {
     }
   }, [recordType]);
   
-  const fetchAvailableTables = async () => {
+  const fetchAvailableTables = async (showToast = false) => {
+    setIsRefreshing(true);
     try {
       console.log('Fetching latest data from database...');
       const { data, error } = await supabase
@@ -99,9 +101,33 @@ export const GenericNLPQueryInterface = () => {
       }
       setAllRecords(recordsMap);
       console.log('Data refreshed:', Object.keys(recordsMap).map(k => `${k}: ${recordsMap[k].length} records`));
+      
+      if (showToast) {
+        toast({
+          title: "Data Refreshed",
+          description: `Loaded ${Object.values(recordsMap).flat().length} records from ${uniqueTypes.length} table(s)`,
+        });
+      }
     } catch (error) {
       console.error('Error fetching tables:', error);
+    } finally {
+      setIsRefreshing(false);
     }
+  };
+  
+  // Fetch fresh data directly from database for queries
+  const getFreshDataForQuery = async (tablesToQuery: string[]) => {
+    const recordsMap: Record<string, any[]> = {};
+    for (const type of tablesToQuery) {
+      const { data: typeData } = await supabase
+        .from('data_records')
+        .select('*')
+        .eq('record_type', type);
+      if (typeData) {
+        recordsMap[type] = typeData;
+      }
+    }
+    return recordsMap;
   };
   
   const toggleTable = (table: string) => {
@@ -120,12 +146,16 @@ export const GenericNLPQueryInterface = () => {
     const startTime = performance.now();
     
     try {
+      // ALWAYS fetch fresh data from database before processing query
+      console.log('Fetching fresh data for query...');
+      const freshRecords = await getFreshDataForQuery(tablesToQuery);
+      
       // Prepare data for all selected tables
       const tablesData: Record<string, any> = {};
       const tablesSchema: Record<string, string[]> = {};
       
       for (const table of tablesToQuery) {
-        const tableRecords = allRecords[table] || [];
+        const tableRecords = freshRecords[table] || [];
         if (tableRecords.length > 0) {
           tablesData[table] = tableRecords.slice(0, 3).map(r => r.data);
           tablesSchema[table] = Object.keys(tableRecords[0].data || {});
@@ -150,7 +180,7 @@ export const GenericNLPQueryInterface = () => {
         throw new Error("No response from AI");
       }
 
-      // Apply the AI's interpretation to filter/process the data
+      // Apply the AI's interpretation to filter/process the data using FRESH data
       const { operations, interpretation, sqlQuery: aiGeneratedSQL, joins } = aiResponse;
       
       let filteredData: any[] = [];
@@ -161,12 +191,12 @@ export const GenericNLPQueryInterface = () => {
       if (joins && joins.length > 0) {
         // For multi-table queries, combine data based on joins
         const primaryTable = tablesToQuery[0];
-        filteredData = (allRecords[primaryTable] || []).map(r => r.data);
+        filteredData = (freshRecords[primaryTable] || []).map(r => r.data);
         
         // Apply join logic (simplified - in real DB this would be done by SQL)
         for (const join of joins) {
           const { fromTable, toTable, fromField, toField } = join;
-          const secondaryData = (allRecords[toTable] || []).map(r => r.data);
+          const secondaryData = (freshRecords[toTable] || []).map(r => r.data);
           
           filteredData = filteredData.map(record => {
             const matchingRecord = secondaryData.find(
@@ -176,9 +206,9 @@ export const GenericNLPQueryInterface = () => {
           });
         }
       } else {
-        // Single table query
+        // Single table query - use fresh data
         const primaryTable = tablesToQuery[0];
-        filteredData = (allRecords[primaryTable] || []).map(r => r.data);
+        filteredData = (freshRecords[primaryTable] || []).map(r => r.data);
       }
       
       if (!sqlQuery) {
@@ -420,16 +450,30 @@ export const GenericNLPQueryInterface = () => {
       
       <Card className="bg-card/50 backdrop-blur terminal-glow">
         <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Brain className="h-5 w-5 text-neon-purple" />
-            <span>Advanced AI Query</span>
-          </CardTitle>
-          <CardDescription>
-            {selectedTables.length > 1 
-              ? `Ask complex questions across ${selectedTables.join(', ')}`
-              : `Ask questions about your ${recordType || 'data'}`
-            }
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center space-x-2">
+                <Brain className="h-5 w-5 text-neon-purple" />
+                <span>Advanced AI Query</span>
+              </CardTitle>
+              <CardDescription>
+                {selectedTables.length > 1 
+                  ? `Ask complex questions across ${selectedTables.join(', ')}`
+                  : `Ask questions about your ${recordType || 'data'}`
+                }
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fetchAvailableTables(true)}
+              disabled={isRefreshing}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing...' : 'Refresh Data'}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
