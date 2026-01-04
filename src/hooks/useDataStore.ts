@@ -133,6 +133,9 @@ export const useDataStore = () => {
       setSchema(detectedSchema);
       await fetchRecords();
       
+      // Dispatch custom event to notify other components that data changed
+      window.dispatchEvent(new CustomEvent('datastore-updated', { detail: { type, count: data.length } }));
+      
       toast({
         title: "Success",
         description: `Imported ${data.length} ${type} records`,
