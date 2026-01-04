@@ -40,10 +40,32 @@ export const GenericNLPQueryInterface = () => {
     clearHistory
   } = useQueryHistory();
   
-  // Refresh data when records change from the data store
+  // Initial fetch and real-time subscription
   useEffect(() => {
     fetchAvailableTables();
-  }, [records]);
+    
+    // Subscribe to real-time changes on data_records table
+    const channel = supabase
+      .channel('data-records-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
+          schema: 'public',
+          table: 'data_records'
+        },
+        () => {
+          // Refetch data when any change occurs
+          console.log('Data changed, refreshing...');
+          fetchAvailableTables();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
   
   useEffect(() => {
     if (recordType && !selectedTables.includes(recordType)) {
@@ -53,6 +75,7 @@ export const GenericNLPQueryInterface = () => {
   
   const fetchAvailableTables = async () => {
     try {
+      console.log('Fetching latest data from database...');
       const { data, error } = await supabase
         .from('data_records')
         .select('record_type')
@@ -75,6 +98,7 @@ export const GenericNLPQueryInterface = () => {
         }
       }
       setAllRecords(recordsMap);
+      console.log('Data refreshed:', Object.keys(recordsMap).map(k => `${k}: ${recordsMap[k].length} records`));
     } catch (error) {
       console.error('Error fetching tables:', error);
     }
