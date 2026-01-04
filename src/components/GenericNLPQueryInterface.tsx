@@ -41,9 +41,17 @@ export const GenericNLPQueryInterface = () => {
     clearHistory
   } = useQueryHistory();
   
-  // Initial fetch and real-time subscription
+  // Initial fetch, real-time subscription, and custom event listener
   useEffect(() => {
     fetchAvailableTables();
+    
+    // Listen for custom datastore-updated events (from import)
+    const handleDataStoreUpdate = () => {
+      console.log('DataStore updated event received, refreshing AI Query data...');
+      fetchAvailableTables(true);
+    };
+    
+    window.addEventListener('datastore-updated', handleDataStoreUpdate);
     
     // Subscribe to real-time changes on data_records table
     const channel = supabase
@@ -64,6 +72,7 @@ export const GenericNLPQueryInterface = () => {
       .subscribe();
 
     return () => {
+      window.removeEventListener('datastore-updated', handleDataStoreUpdate);
       supabase.removeChannel(channel);
     };
   }, []);
