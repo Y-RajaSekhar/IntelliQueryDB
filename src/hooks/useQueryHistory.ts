@@ -45,11 +45,19 @@ export const useQueryHistory = () => {
 
   const addToHistory = async (queryText: string, selectedTables: string[]) => {
     try {
-      // Check if query already exists
+      // Get current user for RLS
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.warn('User not authenticated, skipping history');
+        return;
+      }
+
+      // Check if query already exists for this user
       const { data: existing } = await supabase
         .from('query_history')
         .select('*')
         .eq('query_text', queryText)
+        .eq('user_id', user.id)
         .maybeSingle();
 
       if (existing) {
@@ -63,13 +71,14 @@ export const useQueryHistory = () => {
           })
           .eq('id', existing.id);
       } else {
-        // Insert new query
+        // Insert new query with user_id
         await supabase
           .from('query_history')
           .insert({
             query_text: queryText,
             selected_tables: selectedTables,
-            is_favorite: false
+            is_favorite: false,
+            user_id: user.id
           });
       }
 

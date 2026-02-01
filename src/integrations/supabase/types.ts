@@ -100,6 +100,7 @@ export type Database = {
           id: string
           record_type: string
           updated_at: string | null
+          user_id: string | null
         }
         Insert: {
           created_at?: string | null
@@ -107,6 +108,7 @@ export type Database = {
           id?: string
           record_type: string
           updated_at?: string | null
+          user_id?: string | null
         }
         Update: {
           created_at?: string | null
@@ -114,6 +116,7 @@ export type Database = {
           id?: string
           record_type?: string
           updated_at?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -247,6 +250,7 @@ export type Database = {
           last_executed_at: string
           query_text: string
           selected_tables: string[]
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -256,6 +260,7 @@ export type Database = {
           last_executed_at?: string
           query_text: string
           selected_tables: string[]
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -265,6 +270,7 @@ export type Database = {
           last_executed_at?: string
           query_text?: string
           selected_tables?: string[]
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -279,6 +285,7 @@ export type Database = {
           id: string
           name: string
           updated_at: string
+          user_id: string | null
         }
         Insert: {
           analysis_type: string
@@ -290,6 +297,7 @@ export type Database = {
           id?: string
           name: string
           updated_at?: string
+          user_id?: string | null
         }
         Update: {
           analysis_type?: string
@@ -301,6 +309,7 @@ export type Database = {
           id?: string
           name?: string
           updated_at?: string
+          user_id?: string | null
         }
         Relationships: []
       }
