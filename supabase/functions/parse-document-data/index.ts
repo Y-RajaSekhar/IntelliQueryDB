@@ -6,12 +6,38 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // Verify authentication
+    const authHeader = req.headers.get('authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+    if (userError || !user) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid authentication' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const formData = await req.formData();
     const file = formData.get("file") as File;
     
@@ -19,8 +45,16 @@ serve(async (req) => {
       throw new Error("No file provided");
     }
 
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      return new Response(
+        JSON.stringify({ error: 'File too large. Maximum size is 10MB.' }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const fileName = file.name.toLowerCase();
-    console.log("Processing file:", fileName, "Type:", file.type);
+    console.log("Processing file:", fileName, "Type:", file.type, "Size:", file.size, "User:", user.id);
 
     // Handle CSV files
     if (fileName.endsWith('.csv') || file.type === 'text/csv') {

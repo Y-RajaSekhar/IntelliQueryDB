@@ -192,6 +192,29 @@ export const GenericNLPQueryInterface = () => {
       // Apply the AI's interpretation to filter/process the data using FRESH data
       const { operations, interpretation, sqlQuery: aiGeneratedSQL, joins } = aiResponse;
       
+      // Validation constants
+      const VALID_CONDITIONS = ['gt', 'lt', 'gte', 'lte', 'eq', 'contains', 'avg', 'sum', 'max', 'min', 'count', 'asc', 'desc'];
+      const VALID_OPERATIONS = ['filter', 'sort', 'aggregate', 'groupby', 'limit', 'join'];
+      
+      // Helper function to validate field names against known schema
+      const validateField = (field: string, records: Record<string, any[]>): boolean => {
+        for (const table of Object.keys(records)) {
+          const sampleRecord = records[table]?.[0]?.data;
+          if (sampleRecord && Object.keys(sampleRecord).includes(field)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      
+      // Helper function to sanitize string values
+      const sanitizeValue = (val: any): any => {
+        if (typeof val === 'string') {
+          return val.slice(0, 1000); // Limit length
+        }
+        return val;
+      };
+      
       let filteredData: any[] = [];
       let sqlQuery = aiGeneratedSQL || "";
       let sqlParts: string[] = [];
@@ -205,6 +228,13 @@ export const GenericNLPQueryInterface = () => {
         // Apply join logic (simplified - in real DB this would be done by SQL)
         for (const join of joins) {
           const { fromTable, toTable, fromField, toField } = join;
+          
+          // Validate join fields
+          if (!validateField(fromField, freshRecords) || !validateField(toField, freshRecords)) {
+            console.warn(`Invalid join fields: ${fromField} -> ${toField}, skipping join`);
+            continue;
+          }
+          
           const secondaryData = (freshRecords[toTable] || []).map(r => r.data);
           
           filteredData = filteredData.map(record => {
@@ -226,28 +256,49 @@ export const GenericNLPQueryInterface = () => {
             ? `SELECT * FROM ${tablesToQuery[0]};`
             : `SELECT * FROM ${tablesToQuery.join(', ')};`;
         } else {
-        // Process operations in sequence
+        // Process operations in sequence with validation
         for (const op of operations) {
           const { type, field, condition, value } = op;
           
-          if (type === "filter" && field && condition && value !== null) {
+          // Validate operation type
+          if (!VALID_OPERATIONS.includes(type)) {
+            console.warn(`Invalid operation type: ${type}, skipping`);
+            continue;
+          }
+          
+          // Validate condition if present
+          if (condition && !VALID_CONDITIONS.includes(condition)) {
+            console.warn(`Invalid condition: ${condition}, skipping operation`);
+            continue;
+          }
+          
+          // Validate field if present
+          if (field && !validateField(field, freshRecords)) {
+            console.warn(`Invalid field: ${field}, skipping operation`);
+            continue;
+          }
+          
+          // Sanitize value
+          const sanitizedValue = sanitizeValue(value);
+          
+          if (type === "filter" && field && condition && sanitizedValue !== null) {
             const operators: Record<string, string> = {
               gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", contains: "ILIKE"
             };
             const sqlOp = operators[condition] || "=";
-            const sqlValue = condition === "contains" ? `'%${value}%'` : 
-                           typeof value === 'string' ? `'${value}'` : value;
+            const sqlValue = condition === "contains" ? `'%${sanitizedValue}%'` : 
+                           typeof sanitizedValue === 'string' ? `'${sanitizedValue}'` : sanitizedValue;
             sqlParts.push(`${field} ${sqlOp} ${sqlValue}`);
             
             // Apply filter
             filteredData = filteredData.filter((r: any) => {
               const fieldValue = r[field];
-              if (condition === "gt") return fieldValue > value;
-              if (condition === "lt") return fieldValue < value;
-              if (condition === "gte") return fieldValue >= value;
-              if (condition === "lte") return fieldValue <= value;
-              if (condition === "eq") return fieldValue == value;
-              if (condition === "contains") return String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+              if (condition === "gt") return fieldValue > sanitizedValue;
+              if (condition === "lt") return fieldValue < sanitizedValue;
+              if (condition === "gte") return fieldValue >= sanitizedValue;
+              if (condition === "lte") return fieldValue <= sanitizedValue;
+              if (condition === "eq") return fieldValue == sanitizedValue;
+              if (condition === "contains") return String(fieldValue).toLowerCase().includes(String(sanitizedValue).toLowerCase());
               return true;
             });
           } else if (type === "sort" && field) {

@@ -164,6 +164,17 @@ export const GenericDatabaseManager = () => {
             description: "Extracting data from document...",
           });
 
+          // Get the current session for authentication
+          const { data: sessionData } = await supabase.auth.getSession();
+          if (!sessionData.session?.access_token) {
+            toast({
+              title: "Authentication Required",
+              description: "Please log in to upload documents",
+              variant: "destructive",
+            });
+            return;
+          }
+
           const formData = new FormData();
           formData.append('file', file);
 
@@ -171,6 +182,9 @@ export const GenericDatabaseManager = () => {
             `https://yuxxavwiimengdijdzqm.supabase.co/functions/v1/parse-document-data`,
             {
               method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${sessionData.session.access_token}`
+              },
               body: formData,
             }
           );
