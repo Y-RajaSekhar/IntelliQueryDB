@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Database, Brain, BarChart3, Search, Server, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Database, Brain, BarChart3, Code, Zap, LogOut } from "lucide-react";
 import { GenericDatabaseManager } from "@/components/GenericDatabaseManager";
-import { QueryInterface } from "@/components/QueryInterface";
+import { SQLQueryInterface } from "@/components/SQLQueryInterface";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { GenericNLPQueryInterface } from "@/components/GenericNLPQueryInterface";
 import { PerformanceMonitor } from "@/components/PerformanceMonitor";
+import { useAuth } from "@/components/AuthProvider";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("database");
+  const { user, signOut } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -23,7 +25,7 @@ const Index = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-neon-blue bg-clip-text text-transparent">
-                  NeuraDB
+                  NeuroDB
                 </h1>
                 <p className="text-sm text-muted-foreground">AI-Powered Database System</p>
               </div>
@@ -33,6 +35,22 @@ const Index = () => {
                 <div className="h-2 w-2 animate-pulse rounded-full bg-neon-green"></div>
                 <span className="text-neon-green">System Online</span>
               </div>
+              {user && (
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm text-muted-foreground hidden md:inline">
+                    {user.email}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={signOut}
+                    className="flex items-center space-x-2"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span className="hidden md:inline">Logout</span>
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -41,26 +59,26 @@ const Index = () => {
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-5 w-full max-w-2xl mx-auto bg-card/50">
+          <TabsList className="grid grid-cols-5 w-full max-w-3xl mx-auto bg-card/50">
             <TabsTrigger value="database" className="flex items-center space-x-2">
               <Database className="h-4 w-4" />
-              <span>Database</span>
+              <span className="hidden sm:inline">Database</span>
             </TabsTrigger>
-            <TabsTrigger value="query" className="flex items-center space-x-2">
-              <Search className="h-4 w-4" />
-              <span>Query</span>
+            <TabsTrigger value="sql" className="flex items-center space-x-2">
+              <Code className="h-4 w-4" />
+              <span className="hidden sm:inline">SQL Query</span>
             </TabsTrigger>
-            <TabsTrigger value="nlp" className="flex items-center space-x-2">
+            <TabsTrigger value="ai" className="flex items-center space-x-2">
               <Brain className="h-4 w-4" />
-              <span>AI Query</span>
+              <span className="hidden sm:inline">AI Query</span>
             </TabsTrigger>
             <TabsTrigger value="analytics" className="flex items-center space-x-2">
               <BarChart3 className="h-4 w-4" />
-              <span>Analytics</span>
+              <span className="hidden sm:inline">Analytics</span>
             </TabsTrigger>
             <TabsTrigger value="performance" className="flex items-center space-x-2">
               <Zap className="h-4 w-4" />
-              <span>Performance</span>
+              <span className="hidden sm:inline">Performance</span>
             </TabsTrigger>
           </TabsList>
 
@@ -68,11 +86,11 @@ const Index = () => {
             <GenericDatabaseManager />
           </TabsContent>
 
-          <TabsContent value="query" className="space-y-6">
-            <QueryInterface />
+          <TabsContent value="sql" className="space-y-6">
+            <SQLQueryInterface />
           </TabsContent>
 
-          <TabsContent value="nlp" className="space-y-6">
+          <TabsContent value="ai" className="space-y-6">
             <GenericNLPQueryInterface />
           </TabsContent>
 
