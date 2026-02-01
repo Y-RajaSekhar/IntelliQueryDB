@@ -46,9 +46,20 @@ export const useSavedAnalytics = () => {
 
   const saveAnalytic = async (analytic: Omit<SavedAnalytic, 'id' | 'created_at' | 'updated_at'>) => {
     try {
+      // Get current user for RLS
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to save analytics",
+          variant: "destructive",
+        });
+        return false;
+      }
+
       const { error } = await supabase
         .from('saved_analytics')
-        .insert([analytic]);
+        .insert([{ ...analytic, user_id: user.id }]);
 
       if (error) throw error;
       await fetchSavedAnalytics();

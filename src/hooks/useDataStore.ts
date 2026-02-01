@@ -56,11 +56,23 @@ export const useDataStore = () => {
 
   const addRecord = async (data: Record<string, any>, type?: string) => {
     try {
+      // Get current user for RLS
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to add records",
+          variant: "destructive",
+        });
+        return false;
+      }
+
       const { error } = await supabase
         .from('data_records')
         .insert([{
           record_type: type || recordType,
-          data: data
+          data: data,
+          user_id: user.id
         }]);
 
       if (error) throw error;
@@ -112,6 +124,17 @@ export const useDataStore = () => {
         throw new Error("Data must be a non-empty array");
       }
 
+      // Get current user for RLS
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to import records",
+          variant: "destructive",
+        });
+        return false;
+      }
+
       // Detect record type from data
       const type = detectedType || detectRecordType(data[0]) || "imported_data";
       
@@ -120,7 +143,8 @@ export const useDataStore = () => {
       
       const records = data.map((item) => ({
         record_type: type,
-        data: item
+        data: item,
+        user_id: user.id
       }));
 
       const { error } = await supabase
