@@ -43,29 +43,58 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const systemPrompt = isMultiTable 
-      ? `You are an advanced data analysis AI that handles complex multi-table queries.
+    // Build comprehensive schema information with data types
+    const schemaDetails = Object.entries(schemas).map(([table, fields]) => {
+      const sampleData = tables[table]?.[0] || {};
+      const fieldDetails = (fields as string[]).map(field => {
+        const sampleValue = sampleData[field];
+        const dataType = typeof sampleValue === 'number' ? 'number' :
+                        typeof sampleValue === 'boolean' ? 'boolean' :
+                        Array.isArray(sampleValue) ? 'array' : 'string';
+        return `  - ${field} (${dataType})${sampleValue !== undefined ? ` e.g. "${sampleValue}"` : ''}`;
+      }).join('\n');
+      
+      return `TABLE: ${table}\nFIELDS:\n${fieldDetails}\nSAMPLE ROW: ${JSON.stringify(sampleData, null, 2)}`;
+    }).join('\n\n');
 
-Available tables and their schemas:
-${Object.entries(schemas).map(([table, fields]) => 
-  `Table: ${table}\nFields: ${(fields as string[]).join(", ")}\nSample: ${JSON.stringify(tables[table]?.[0] || {})}`
-).join("\n\n")}
+    const systemPrompt = `You are NeuroDB AI - an expert Text-to-SQL assistant that converts natural language queries into precise SQL operations.
 
-You can perform:
-- Cross-table queries with JOINs
-- Complex aggregations across multiple tables
-- Comparative analysis between tables
-- Correlation and relationship discovery
+=== DATABASE SCHEMA ===
+${schemaDetails}
 
-Interpret the user's query and determine what operations and joins are needed.`
-      : `You are a data analysis AI that analyzes natural language queries about data.
+=== YOUR CAPABILITIES ===
+1. FILTERING: Filter data by any field with conditions (equals, greater than, less than, contains, etc.)
+2. SORTING: Order results by any field (ascending or descending)
+3. AGGREGATION: Calculate COUNT, SUM, AVG, MIN, MAX on numeric fields
+4. GROUPING: Group data by categorical fields and count occurrences
+5. LIMITING: Restrict result count
+6. MULTI-TABLE: For multiple tables, perform JOIN operations
 
-Available tables and schemas:
-${Object.entries(schemas).map(([table, fields]) => 
-  `Table: ${table}\nFields: ${(fields as string[]).join(", ")}\nSample: ${JSON.stringify(tables[table]?.[0] || {})}`
-).join("\n\n")}
+=== QUERY INTERPRETATION RULES ===
+- "show", "list", "display", "get", "find" → retrieve data
+- "how many", "count", "number of" → COUNT aggregation
+- "average", "mean" → AVG aggregation
+- "total", "sum" → SUM aggregation
+- "highest", "maximum", "top", "best" → MAX or sort DESC with LIMIT
+- "lowest", "minimum", "bottom", "worst" → MIN or sort ASC with LIMIT
+- "by [field]" usually means GROUP BY or ORDER BY
+- "where", "with", "that has" → FILTER condition
+- "contains", "like", "includes" → CONTAINS filter
+- "top N", "first N" → LIMIT N with appropriate sort
+- "youngest", "oldest", "newest" → sort by date/age field
 
-Interpret the user's query and determine what operations are needed.`;
+=== IMPORTANT INSTRUCTIONS ===
+- ALWAYS analyze the query carefully and map it to the correct fields
+- For "top N by X", sort by X descending and limit to N
+- For "youngest/oldest", determine the age/date field and sort appropriately
+- When filtering by text, use CONTAINS for partial matches
+- For aggregations, clearly specify the field and aggregation type
+- Include a clear interpretation of what you understood from the query
+
+=== SECURITY ===
+- Only generate SELECT operations (no INSERT, UPDATE, DELETE, DROP)
+- Only use fields that exist in the schema
+- Validate all values are reasonable`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -77,18 +106,29 @@ Interpret the user's query and determine what operations are needed.`;
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: query }
+          { role: "user", content: `Convert this natural language query to SQL operations: "${query}"` }
         ],
         tools: [{
           type: "function",
           function: {
             name: "analyze_query",
-            description: "Analyze the natural language query and return structured query parameters for single or multi-table queries",
+            description: "Analyze the natural language query and return structured query parameters",
             parameters: {
               type: "object",
               properties: {
-                interpretation: { type: "string", description: "Brief explanation of what was understood" },
-                sqlQuery: { type: "string", description: "Complete SQL query if multi-table with complex joins" },
+                interpretation: { 
+                  type: "string", 
+                  description: "Clear explanation of what the AI understood from the query (1-2 sentences)"
+                },
+                queryType: {
+                  type: "string",
+                  enum: ["select", "aggregate", "groupby", "join"],
+                  description: "The main type of query being performed"
+                },
+                sqlQuery: { 
+                  type: "string", 
+                  description: "Complete SQL query string for complex multi-table joins" 
+                },
                 joins: {
                   type: "array",
                   items: {
@@ -109,17 +149,33 @@ Interpret the user's query and determine what operations are needed.`;
                   items: {
                     type: "object",
                     properties: {
-                      type: { type: "string", enum: ["filter", "sort", "aggregate", "groupby", "limit", "join"] },
+                      type: { 
+                        type: "string", 
+                        enum: ["filter", "sort", "aggregate", "groupby", "limit"],
+                        description: "Operation type"
+                      },
                       table: { type: "string", description: "Table name for this operation" },
                       field: { type: "string", description: "Field name to operate on" },
-                      condition: { type: "string", enum: ["gt", "lt", "gte", "lte", "eq", "contains", "avg", "sum", "max", "min", "count", "asc", "desc"] },
-                      value: { description: "Value for comparison or limit number" }
+                      condition: { 
+                        type: "string", 
+                        enum: ["gt", "lt", "gte", "lte", "eq", "neq", "contains", "startswith", "endswith", "avg", "sum", "max", "min", "count", "asc", "desc"],
+                        description: "Condition or aggregation type"
+                      },
+                      value: { 
+                        description: "Value for comparison, or limit number. Use appropriate type (number for numeric comparisons, string for text)"
+                      }
                     },
                     required: ["type"]
-                  }
+                  },
+                  description: "Array of operations to apply in sequence"
+                },
+                selectFields: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Specific fields to select (if not all)"
                 }
               },
-              required: ["interpretation"],
+              required: ["interpretation", "operations"],
               additionalProperties: false
             }
           }
@@ -131,29 +187,33 @@ Interpret the user's query and determine what operations are needed.`;
     if (!response.ok) {
       if (response.status === 429) {
         return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
+          JSON.stringify({ error: "Rate limit exceeded. Please try again in a few moments." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       if (response.status === 402) {
         return new Response(
-          JSON.stringify({ error: "Payment required. Please add credits to your workspace." }),
+          JSON.stringify({ error: "AI credits exhausted. Please add credits to continue using AI queries." }),
           { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       const errorText = await response.text();
       console.error("AI gateway error:", response.status, errorText);
-      throw new Error("AI gateway error");
+      throw new Error("AI service temporarily unavailable. Please try again.");
     }
 
     const aiResponse = await response.json();
     const toolCall = aiResponse.choices[0].message.tool_calls?.[0];
     
     if (!toolCall || !toolCall.function.arguments) {
-      throw new Error("Invalid AI response format");
+      throw new Error("AI could not process your query. Please try rephrasing.");
     }
     
     const parsedResponse = JSON.parse(toolCall.function.arguments);
+    
+    // Log for debugging
+    console.log("Query:", query);
+    console.log("AI Response:", JSON.stringify(parsedResponse, null, 2));
     
     return new Response(
       JSON.stringify(parsedResponse),
@@ -163,7 +223,10 @@ Interpret the user's query and determine what operations are needed.`;
   } catch (error) {
     console.error("Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : "Failed to process query. Please try again.",
+        interpretation: "Unable to process your query"
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Brain, ArrowRight, Lightbulb, MessageSquare, Database, RefreshCw } from "lucide-react";
+import { Brain, ArrowRight, Lightbulb, MessageSquare, Database, RefreshCw, Sparkles, AlertCircle, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDataStore } from "@/hooks/useDataStore";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,13 +11,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { useQueryHistory } from "@/hooks/useQueryHistory";
 import { QueryHistoryPanel } from "@/components/QueryHistoryPanel";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface NLPResult {
   naturalQuery: string;
   sqlQuery: string;
-  confidence: number;
+  interpretation: string;
+  queryType: string;
   data: any[];
   executionTime: number;
+  recordCount: number;
 }
 
 export const GenericNLPQueryInterface = () => {
@@ -26,10 +29,12 @@ export const GenericNLPQueryInterface = () => {
   const [naturalQuery, setNaturalQuery] = useState("");
   const [result, setResult] = useState<NLPResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState("");
   const [availableTables, setAvailableTables] = useState<string[]>([]);
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [allRecords, setAllRecords] = useState<Record<string, any[]>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   const {
     history,
@@ -41,34 +46,26 @@ export const GenericNLPQueryInterface = () => {
     clearHistory
   } = useQueryHistory();
   
-  // Initial fetch, real-time subscription, and custom event listener
   useEffect(() => {
     fetchAvailableTables();
     
-    // Listen for custom datastore-updated events (from import)
     const handleDataStoreUpdate = () => {
-      console.log('DataStore updated event received, refreshing AI Query data...');
+      console.log('DataStore updated, refreshing AI Query data...');
       fetchAvailableTables(true);
     };
     
     window.addEventListener('datastore-updated', handleDataStoreUpdate);
     
-    // Subscribe to real-time changes on data_records table
     const channel = supabase
       .channel('data-records-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
-          schema: 'public',
-          table: 'data_records'
-        },
-        () => {
-          // Refetch data when any change occurs
-          console.log('Data changed, refreshing...');
-          fetchAvailableTables();
-        }
-      )
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'data_records'
+      }, () => {
+        console.log('Data changed, refreshing...');
+        fetchAvailableTables();
+      })
       .subscribe();
 
     return () => {
@@ -86,7 +83,6 @@ export const GenericNLPQueryInterface = () => {
   const fetchAvailableTables = async (showToast = false) => {
     setIsRefreshing(true);
     try {
-      console.log('Fetching latest data from database...');
       const { data, error } = await supabase
         .from('data_records')
         .select('record_type')
@@ -97,7 +93,6 @@ export const GenericNLPQueryInterface = () => {
       const uniqueTypes = Array.from(new Set(data.map(r => r.record_type)));
       setAvailableTables(uniqueTypes);
       
-      // Fetch all records for each table
       const recordsMap: Record<string, any[]> = {};
       for (const type of uniqueTypes) {
         const { data: typeData } = await supabase
@@ -109,7 +104,6 @@ export const GenericNLPQueryInterface = () => {
         }
       }
       setAllRecords(recordsMap);
-      console.log('Data refreshed:', Object.keys(recordsMap).map(k => `${k}: ${recordsMap[k].length} records`));
       
       if (showToast) {
         toast({
@@ -124,7 +118,6 @@ export const GenericNLPQueryInterface = () => {
     }
   };
   
-  // Fetch fresh data directly from database for queries
   const getFreshDataForQuery = async (tablesToQuery: string[]) => {
     const recordsMap: Record<string, any[]> = {};
     for (const type of tablesToQuery) {
@@ -152,26 +145,26 @@ export const GenericNLPQueryInterface = () => {
     if (tablesToQuery.length === 0) return;
     
     setIsProcessing(true);
+    setError(null);
+    setResult(null);
     const startTime = performance.now();
     
     try {
-      // ALWAYS fetch fresh data from database before processing query
-      console.log('Fetching fresh data for query...');
+      setProcessingStep("Fetching latest data...");
       const freshRecords = await getFreshDataForQuery(tablesToQuery);
       
-      // Prepare data for all selected tables
       const tablesData: Record<string, any> = {};
       const tablesSchema: Record<string, string[]> = {};
       
       for (const table of tablesToQuery) {
         const tableRecords = freshRecords[table] || [];
         if (tableRecords.length > 0) {
-          tablesData[table] = tableRecords.slice(0, 3).map(r => r.data);
+          tablesData[table] = tableRecords.slice(0, 5).map(r => r.data);
           tablesSchema[table] = Object.keys(tableRecords[0].data || {});
         }
       }
       
-      // Call the AI edge function with multi-table support
+      setProcessingStep("AI is analyzing your query...");
       const { data: aiResponse, error: functionError } = await supabase.functions.invoke('nlp-query', {
         body: {
           query: naturalQuery,
@@ -182,21 +175,24 @@ export const GenericNLPQueryInterface = () => {
       });
 
       if (functionError) {
-        throw functionError;
+        throw new Error(functionError.message || "Failed to connect to AI service");
+      }
+
+      if (aiResponse?.error) {
+        throw new Error(aiResponse.error);
       }
 
       if (!aiResponse) {
-        throw new Error("No response from AI");
+        throw new Error("No response from AI service");
       }
 
-      // Apply the AI's interpretation to filter/process the data using FRESH data
-      const { operations, interpretation, sqlQuery: aiGeneratedSQL, joins } = aiResponse;
+      setProcessingStep("Processing results...");
+      const { operations, interpretation, sqlQuery: aiGeneratedSQL, joins, queryType, selectFields } = aiResponse;
       
       // Validation constants
-      const VALID_CONDITIONS = ['gt', 'lt', 'gte', 'lte', 'eq', 'contains', 'avg', 'sum', 'max', 'min', 'count', 'asc', 'desc'];
-      const VALID_OPERATIONS = ['filter', 'sort', 'aggregate', 'groupby', 'limit', 'join'];
+      const VALID_CONDITIONS = ['gt', 'lt', 'gte', 'lte', 'eq', 'neq', 'contains', 'startswith', 'endswith', 'avg', 'sum', 'max', 'min', 'count', 'asc', 'desc'];
+      const VALID_OPERATIONS = ['filter', 'sort', 'aggregate', 'groupby', 'limit'];
       
-      // Helper function to validate field names against known schema
       const validateField = (field: string, records: Record<string, any[]>): boolean => {
         for (const table of Object.keys(records)) {
           const sampleRecord = records[table]?.[0]?.data;
@@ -207,10 +203,9 @@ export const GenericNLPQueryInterface = () => {
         return false;
       };
       
-      // Helper function to sanitize string values
       const sanitizeValue = (val: any): any => {
         if (typeof val === 'string') {
-          return val.slice(0, 1000); // Limit length
+          return val.slice(0, 1000);
         }
         return val;
       };
@@ -219,19 +214,16 @@ export const GenericNLPQueryInterface = () => {
       let sqlQuery = aiGeneratedSQL || "";
       let sqlParts: string[] = [];
       
-      // If multi-table query with joins, handle differently
+      // Handle joins for multi-table queries
       if (joins && joins.length > 0) {
-        // For multi-table queries, combine data based on joins
         const primaryTable = tablesToQuery[0];
         filteredData = (freshRecords[primaryTable] || []).map(r => r.data);
         
-        // Apply join logic (simplified - in real DB this would be done by SQL)
         for (const join of joins) {
           const { fromTable, toTable, fromField, toField } = join;
           
-          // Validate join fields
           if (!validateField(fromField, freshRecords) || !validateField(toField, freshRecords)) {
-            console.warn(`Invalid join fields: ${fromField} -> ${toField}, skipping join`);
+            console.warn(`Invalid join fields: ${fromField} -> ${toField}`);
             continue;
           }
           
@@ -245,60 +237,61 @@ export const GenericNLPQueryInterface = () => {
           });
         }
       } else {
-        // Single table query - use fresh data
         const primaryTable = tablesToQuery[0];
         filteredData = (freshRecords[primaryTable] || []).map(r => r.data);
       }
       
-      if (!sqlQuery) {
-        if (!operations || operations.length === 0) {
-          sqlQuery = tablesToQuery.length === 1 
-            ? `SELECT * FROM ${tablesToQuery[0]};`
-            : `SELECT * FROM ${tablesToQuery.join(', ')};`;
-        } else {
-        // Process operations in sequence with validation
+      if (!sqlQuery && (!operations || operations.length === 0)) {
+        const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
+        sqlQuery = `SELECT * FROM ${fromClause};`;
+      } else if (!sqlQuery && operations) {
+        // Process operations
         for (const op of operations) {
           const { type, field, condition, value } = op;
           
-          // Validate operation type
           if (!VALID_OPERATIONS.includes(type)) {
-            console.warn(`Invalid operation type: ${type}, skipping`);
+            console.warn(`Invalid operation: ${type}`);
             continue;
           }
           
-          // Validate condition if present
           if (condition && !VALID_CONDITIONS.includes(condition)) {
-            console.warn(`Invalid condition: ${condition}, skipping operation`);
+            console.warn(`Invalid condition: ${condition}`);
             continue;
           }
           
-          // Validate field if present
           if (field && !validateField(field, freshRecords)) {
-            console.warn(`Invalid field: ${field}, skipping operation`);
+            console.warn(`Invalid field: ${field}`);
             continue;
           }
           
-          // Sanitize value
           const sanitizedValue = sanitizeValue(value);
           
-          if (type === "filter" && field && condition && sanitizedValue !== null) {
+          if (type === "filter" && field && condition && sanitizedValue !== null && sanitizedValue !== undefined) {
             const operators: Record<string, string> = {
-              gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", contains: "ILIKE"
+              gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", neq: "!=", 
+              contains: "ILIKE", startswith: "ILIKE", endswith: "ILIKE"
             };
             const sqlOp = operators[condition] || "=";
-            const sqlValue = condition === "contains" ? `'%${sanitizedValue}%'` : 
-                           typeof sanitizedValue === 'string' ? `'${sanitizedValue}'` : sanitizedValue;
+            let sqlValue = typeof sanitizedValue === 'string' ? `'${sanitizedValue}'` : sanitizedValue;
+            if (condition === "contains") sqlValue = `'%${sanitizedValue}%'`;
+            if (condition === "startswith") sqlValue = `'${sanitizedValue}%'`;
+            if (condition === "endswith") sqlValue = `'%${sanitizedValue}'`;
+            
             sqlParts.push(`${field} ${sqlOp} ${sqlValue}`);
             
-            // Apply filter
             filteredData = filteredData.filter((r: any) => {
               const fieldValue = r[field];
-              if (condition === "gt") return fieldValue > sanitizedValue;
-              if (condition === "lt") return fieldValue < sanitizedValue;
-              if (condition === "gte") return fieldValue >= sanitizedValue;
-              if (condition === "lte") return fieldValue <= sanitizedValue;
-              if (condition === "eq") return fieldValue == sanitizedValue;
+              if (fieldValue === undefined || fieldValue === null) return false;
+              
+              if (condition === "gt") return Number(fieldValue) > Number(sanitizedValue);
+              if (condition === "lt") return Number(fieldValue) < Number(sanitizedValue);
+              if (condition === "gte") return Number(fieldValue) >= Number(sanitizedValue);
+              if (condition === "lte") return Number(fieldValue) <= Number(sanitizedValue);
+              if (condition === "eq") return String(fieldValue).toLowerCase() === String(sanitizedValue).toLowerCase();
+              if (condition === "neq") return String(fieldValue).toLowerCase() !== String(sanitizedValue).toLowerCase();
               if (condition === "contains") return String(fieldValue).toLowerCase().includes(String(sanitizedValue).toLowerCase());
+              if (condition === "startswith") return String(fieldValue).toLowerCase().startsWith(String(sanitizedValue).toLowerCase());
+              if (condition === "endswith") return String(fieldValue).toLowerCase().endsWith(String(sanitizedValue).toLowerCase());
               return true;
             });
           } else if (type === "sort" && field) {
@@ -308,17 +301,23 @@ export const GenericNLPQueryInterface = () => {
             filteredData = filteredData.sort((a: any, b: any) => {
               const aVal = a[field];
               const bVal = b[field];
-              const comparison = typeof aVal === 'number' ? aVal - bVal : String(aVal).localeCompare(String(bVal));
+              
+              // Handle numeric sorting
+              if (typeof aVal === 'number' && typeof bVal === 'number') {
+                return condition === "asc" ? aVal - bVal : bVal - aVal;
+              }
+              
+              // Handle string sorting
+              const comparison = String(aVal || '').localeCompare(String(bVal || ''));
               return condition === "asc" ? comparison : -comparison;
             });
           } else if (type === "limit" && value) {
             sqlParts.push(`LIMIT ${value}`);
             filteredData = filteredData.slice(0, Number(value));
           } else if (type === "groupby" && field) {
-            // Group by aggregation
             const grouped = new Map<string, number>();
             filteredData.forEach((r: any) => {
-              const key = String(r[field] || 'Unknown');
+              const key = String(r[field] ?? 'Unknown');
               grouped.set(key, (grouped.get(key) || 0) + 1);
             });
             
@@ -327,45 +326,54 @@ export const GenericNLPQueryInterface = () => {
               count: count
             }));
             
-            if (condition === "count") {
-              sqlParts.push(`GROUP BY ${field}`);
-              const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
-              sqlQuery = `SELECT ${field}, COUNT(*) as count FROM ${fromClause} ${sqlParts.join(" ")};`;
-            }
+            const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
+            sqlQuery = `SELECT ${field}, COUNT(*) as count FROM ${fromClause} GROUP BY ${field};`;
           } else if (type === "aggregate" && field && condition) {
-            const values = filteredData.map((r: any) => r[field]).filter((v: any) => typeof v === 'number');
-            let result = 0;
+            const values = filteredData.map((r: any) => Number(r[field])).filter((v: number) => !isNaN(v));
+            let aggregateResult = 0;
+            let aggregateName = "";
             
             const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
             
             if (condition === "avg") {
-              result = values.reduce((sum: number, v: number) => sum + v, 0) / (values.length || 1);
+              aggregateResult = values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
+              aggregateName = "average";
               sqlQuery = `SELECT AVG(${field}) as average FROM ${fromClause};`;
             } else if (condition === "sum") {
-              result = values.reduce((sum: number, v: number) => sum + v, 0);
+              aggregateResult = values.reduce((sum, v) => sum + v, 0);
+              aggregateName = "total";
               sqlQuery = `SELECT SUM(${field}) as total FROM ${fromClause};`;
             } else if (condition === "max") {
-              result = Math.max(...values);
+              aggregateResult = values.length > 0 ? Math.max(...values) : 0;
+              aggregateName = "maximum";
               sqlQuery = `SELECT MAX(${field}) as maximum FROM ${fromClause};`;
             } else if (condition === "min") {
-              result = Math.min(...values);
+              aggregateResult = values.length > 0 ? Math.min(...values) : 0;
+              aggregateName = "minimum";
               sqlQuery = `SELECT MIN(${field}) as minimum FROM ${fromClause};`;
             } else if (condition === "count") {
-              result = filteredData.length;
+              aggregateResult = filteredData.length;
+              aggregateName = "count";
               sqlQuery = `SELECT COUNT(*) as count FROM ${fromClause};`;
             }
             
-            filteredData = [{ [field]: parseFloat(result.toFixed(2)), description: `${condition.toUpperCase()} of ${field}` }];
+            filteredData = [{ 
+              [aggregateName]: parseFloat(aggregateResult.toFixed(2)),
+              field: field,
+              operation: condition.toUpperCase()
+            }];
           }
         }
         
-          // Build final SQL if not already set
+        // Build final SQL if not already set
+        if (!sqlQuery) {
           const whereClauses = sqlParts.filter(p => !p.startsWith('ORDER') && !p.startsWith('LIMIT'));
           const orderClause = sqlParts.find(p => p.startsWith('ORDER'));
           const limitClause = sqlParts.find(p => p.startsWith('LIMIT'));
           
           const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
-          sqlQuery = `SELECT * FROM ${fromClause}`;
+          const selectClause = selectFields?.length ? selectFields.join(', ') : '*';
+          sqlQuery = `SELECT ${selectClause} FROM ${fromClause}`;
           if (whereClauses.length > 0) sqlQuery += ` WHERE ${whereClauses.join(' AND ')}`;
           if (orderClause) sqlQuery += ` ${orderClause}`;
           if (limitClause) sqlQuery += ` ${limitClause}`;
@@ -378,40 +386,42 @@ export const GenericNLPQueryInterface = () => {
       setResult({
         naturalQuery,
         sqlQuery,
-        confidence: 0.95,
+        interpretation: interpretation || "Query processed successfully",
+        queryType: queryType || "select",
         data: filteredData,
         executionTime,
+        recordCount: filteredData.length
       });
       
-      // Add to history after successful query
       await addToHistory(naturalQuery, tablesToQuery);
       
       toast({
-        title: "AI Query Processed",
-        description: interpretation || "Query processed successfully",
+        title: "Query Completed",
+        description: `Found ${filteredData.length} result${filteredData.length !== 1 ? 's' : ''} in ${(executionTime / 1000).toFixed(2)}s`,
       });
       
     } catch (error: any) {
       console.error("NLP Query Error:", error);
+      setError(error.message || "Could not process the query. Please try rephrasing.");
       toast({
         title: "Query Failed",
-        description: error.message || "Could not process the query. Please try again.",
+        description: error.message || "Could not process the query.",
         variant: "destructive",
       });
+    } finally {
+      setIsProcessing(false);
+      setProcessingStep("");
     }
-    
-    setIsProcessing(false);
   };
 
   const generateSampleQueries = () => {
     const tables = selectedTables.length > 0 ? selectedTables : [recordType];
     if (tables.length === 0 || !allRecords[tables[0]]?.length) {
-      return ["Import data first to see sample queries"];
+      return [];
     }
     
     const queries: string[] = [];
     
-    // Single table queries
     if (tables.length === 1) {
       const table = tables[0];
       const sampleRecord = allRecords[table]?.[0]?.data;
@@ -424,32 +434,29 @@ export const GenericNLPQueryInterface = () => {
         typeof sampleRecord[field] === 'string'
       );
       
-      queries.push(
-        `How many ${table} are there?`,
-        `Show me all ${table}`
-      );
+      queries.push(`Show me all ${table}`);
+      queries.push(`How many ${table} are there?`);
       
       if (numericFields.length > 0) {
-        queries.push(
-          `What's the average ${numericFields[0]}?`,
-          `Show top 5 ${table} by ${numericFields[0]}`
-        );
+        const numField = numericFields[0];
+        queries.push(`What is the average ${numField}?`);
+        queries.push(`Show top 5 ${table} by highest ${numField}`);
+        queries.push(`Find ${table} with ${numField} greater than 50`);
       }
       
       if (textFields.length > 0) {
-        queries.push(`Find ${table} where ${textFields[0]} contains "test"`);
+        const textField = textFields[0];
+        const sampleValue = String(sampleRecord[textField]).slice(0, 10);
+        queries.push(`Find ${table} where ${textField} contains "${sampleValue}"`);
+        queries.push(`Group ${table} by ${textField}`);
       }
     } else {
-      // Multi-table queries
-      queries.push(
-        `Show data from ${tables.join(' and ')}`,
-        `Compare ${tables[0]} with ${tables[1]}`,
-        `Find matching records between ${tables.join(' and ')}`,
-        `What's the relationship between ${tables.join(' and ')}?`
-      );
+      queries.push(`Show data from ${tables.join(' and ')}`);
+      queries.push(`Compare ${tables[0]} with ${tables[1]}`);
+      queries.push(`Find matching records between ${tables.join(' and ')}`);
     }
     
-    return queries;
+    return queries.slice(0, 6);
   };
 
   const sampleQueries = generateSampleQueries();
@@ -472,33 +479,37 @@ export const GenericNLPQueryInterface = () => {
         onDelete={deleteFromHistory}
         onClearHistory={clearHistory}
       />
+      
       {availableTables.length > 1 && (
-        <Card className="bg-card/50 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Database className="h-5 w-5 text-neon-blue" />
-              <span>Select Tables to Query</span>
+        <Card className="bg-card/50 backdrop-blur border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center space-x-2 text-lg">
+              <Database className="h-5 w-5 text-primary" />
+              <span>Select Tables</span>
             </CardTitle>
-            <CardDescription>
-              Choose multiple tables for advanced cross-table queries
-            </CardDescription>
+            <CardDescription>Choose tables for cross-table AI queries</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {availableTables.map((table) => (
-                <div key={table} className="flex items-center space-x-2">
+                <div 
+                  key={table} 
+                  className={`flex items-center space-x-2 p-2 rounded-lg border transition-colors cursor-pointer ${
+                    selectedTables.includes(table) 
+                      ? 'bg-primary/10 border-primary/50' 
+                      : 'bg-muted/20 border-border/50 hover:bg-muted/40'
+                  }`}
+                  onClick={() => toggleTable(table)}
+                >
                   <Checkbox
                     id={table}
                     checked={selectedTables.includes(table)}
                     onCheckedChange={() => toggleTable(table)}
                   />
-                  <Label
-                    htmlFor={table}
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
+                  <Label htmlFor={table} className="text-sm font-medium cursor-pointer flex-1">
                     {table}
-                    <span className="text-xs text-muted-foreground ml-2">
-                      ({allRecords[table]?.length || 0} records)
+                    <span className="text-xs text-muted-foreground ml-1">
+                      ({allRecords[table]?.length || 0})
                     </span>
                   </Label>
                 </div>
@@ -508,104 +519,126 @@ export const GenericNLPQueryInterface = () => {
         </Card>
       )}
       
-      <Card className="bg-card/50 backdrop-blur terminal-glow">
-        <CardHeader>
+      <Card className="bg-card/50 backdrop-blur border-primary/20 shadow-lg">
+        <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center space-x-2">
-                <Brain className="h-5 w-5 text-neon-purple" />
-                <span>Advanced AI Query</span>
-              </CardTitle>
-              <CardDescription>
-                {selectedTables.length > 1 
-                  ? `Ask complex questions across ${selectedTables.join(', ')}`
-                  : `Ask questions about your ${recordType || 'data'}`
-                }
-              </CardDescription>
+            <div className="flex items-center space-x-3">
+              <div className="p-2 rounded-lg bg-primary/10">
+                <Brain className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  NeuroDB AI Query
+                  <Badge variant="secondary" className="text-xs">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    Powered by AI
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="mt-1">
+                  {selectedTables.length > 1 
+                    ? `Ask complex questions across ${selectedTables.join(', ')}`
+                    : `Ask questions in plain English about your ${recordType || 'data'}`
+                  }
+                </CardDescription>
+              </div>
             </div>
             <Button
               variant="outline"
               size="sm"
               onClick={() => fetchAvailableTables(true)}
               disabled={isRefreshing}
-              className="flex items-center gap-2"
             >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              {isRefreshing ? 'Refreshing...' : 'Refresh Data'}
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
             </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Natural Language Query</label>
+          <div className="space-y-3">
             <div className="flex space-x-2">
               <Input
                 value={naturalQuery}
                 onChange={(e) => setNaturalQuery(e.target.value)}
-                className="flex-1"
+                className="flex-1 h-12 text-base"
                 placeholder={
-                  selectedTables.length > 1
-                    ? `e.g., Compare ${selectedTables[0]} and ${selectedTables[1]}...`
-                    : `e.g., Show me all ${recordType || 'records'}...`
+                  availableTables.length === 0 
+                    ? "Import data first to use AI queries..."
+                    : selectedTables.length > 1
+                      ? `e.g., "Compare data between ${selectedTables[0]} and ${selectedTables[1]}"`
+                      : `e.g., "Show me the top 5 records by highest value"`
                 }
-                onKeyPress={(e) => e.key === 'Enter' && processNaturalLanguageQuery()}
-                disabled={availableTables.length === 0}
+                onKeyPress={(e) => e.key === 'Enter' && !isProcessing && processNaturalLanguageQuery()}
+                disabled={availableTables.length === 0 || isProcessing}
               />
               <Button
                 onClick={processNaturalLanguageQuery}
                 disabled={isProcessing || !naturalQuery.trim() || availableTables.length === 0}
-                className="flex items-center space-x-2"
+                className="h-12 px-6"
+                size="lg"
               >
-                <Brain className="h-4 w-4" />
-                <span>{isProcessing ? "Processing..." : "Ask AI"}</span>
+                {isProcessing ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Brain className="h-4 w-4 mr-2" />
+                    Ask AI
+                  </>
+                )}
               </Button>
             </div>
-            {selectedTables.length > 1 && (
-              <div className="bg-muted/20 rounded-lg p-3">
-                <p className="text-sm font-medium text-neon-blue">Multi-Table Mode Active</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  You can ask complex queries like joins, comparisons, and correlations across tables
-                </p>
+            
+            {isProcessing && processingStep && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                {processingStep}
               </div>
             )}
-            {availableTables.length === 0 && (
-              <p className="text-sm text-muted-foreground">Import data first to use AI queries</p>
+            
+            {error && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm">
+                <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium text-destructive">Query Failed</p>
+                  <p className="text-muted-foreground">{error}</p>
+                </div>
+              </div>
+            )}
+            
+            {selectedTables.length > 1 && (
+              <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20 text-sm">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span className="text-muted-foreground">
+                  <strong>Multi-Table Mode:</strong> AI can perform joins and cross-table analysis
+                </span>
+              </div>
             )}
           </div>
-          
-          {result && (
-            <div className="flex items-center justify-between text-sm bg-muted/20 rounded-lg p-3">
-              <div className="flex items-center space-x-2">
-                <MessageSquare className="h-4 w-4 text-neon-purple" />
-                <span className="font-medium">AI Interpretation:</span>
-              </div>
-              <Badge variant="secondary">
-                {(result.confidence * 100).toFixed(0)}% confidence
-              </Badge>
-            </div>
-          )}
         </CardContent>
       </Card>
 
-      {availableTables.length > 0 && (
-        <Card className="bg-card/50 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Lightbulb className="h-5 w-5 text-neon-orange" />
-              <span>Try These Examples</span>
+      {sampleQueries.length > 0 && (
+        <Card className="bg-card/50 backdrop-blur border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center space-x-2 text-lg">
+              <Lightbulb className="h-5 w-5 text-amber-500" />
+              <span>Example Queries</span>
             </CardTitle>
-            <CardDescription>Click on any example to try it out</CardDescription>
+            <CardDescription>Click to try these sample queries</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               {sampleQueries.map((query, index) => (
                 <Button
                   key={index}
                   variant="outline"
-                  className="justify-start text-left h-auto p-3"
+                  className="justify-start text-left h-auto py-3 px-4 text-sm hover:bg-primary/5 hover:border-primary/30"
                   onClick={() => setNaturalQuery(query)}
-                  disabled={availableTables.length === 0}
+                  disabled={isProcessing}
                 >
+                  <MessageSquare className="h-4 w-4 mr-2 shrink-0 text-muted-foreground" />
                   {query}
                 </Button>
               ))}
@@ -614,55 +647,108 @@ export const GenericNLPQueryInterface = () => {
         </Card>
       )}
 
-      {result && (
-        <Card className="bg-card/50 backdrop-blur">
+      {isProcessing && !result && (
+        <Card className="bg-card/50 backdrop-blur border-border/50">
           <CardHeader>
-            <CardTitle>AI Translation</CardTitle>
-            <CardDescription>
-              Natural language query translated to SQL in {result.executionTime.toFixed(0)}ms
-            </CardDescription>
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-64 mt-2" />
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center space-x-4 p-4 bg-muted/20 rounded-lg">
-              <div className="flex-1">
-                <p className="text-sm text-muted-foreground mb-1">Natural Language:</p>
-                <p className="font-medium">{result.naturalQuery}</p>
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </CardContent>
+        </Card>
+      )}
+
+      {result && (
+        <Card className="bg-card/50 backdrop-blur border-border/50">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  Query Results
+                </CardTitle>
+                <CardDescription className="mt-1">
+                  {result.recordCount} result{result.recordCount !== 1 ? 's' : ''} in {(result.executionTime / 1000).toFixed(2)}s
+                </CardDescription>
               </div>
-              <ArrowRight className="h-5 w-5 text-neon-blue" />
-              <div className="flex-1">
-                <p className="text-sm text-muted-foreground mb-1">Generated SQL:</p>
-                <code className="text-sm font-mono bg-terminal-bg/50 px-2 py-1 rounded block overflow-x-auto">
+              <Badge variant="outline" className="capitalize">
+                {result.queryType}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* AI Interpretation */}
+            <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+              <div className="flex items-start gap-3">
+                <div className="p-1.5 rounded-md bg-primary/10">
+                  <Brain className="h-4 w-4 text-primary" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-foreground mb-1">AI Interpretation</p>
+                  <p className="text-sm text-muted-foreground">{result.interpretation}</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Query Translation */}
+            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4 p-4 bg-muted/30 rounded-lg">
+              <div className="flex-1 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Natural Language</p>
+                <p className="text-sm font-medium">{result.naturalQuery}</p>
+              </div>
+              <ArrowRight className="h-5 w-5 text-primary hidden md:block shrink-0" />
+              <div className="flex-1 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Generated SQL</p>
+                <code className="text-sm font-mono bg-background/80 px-3 py-1.5 rounded block overflow-x-auto border">
                   {result.sqlQuery}
                 </code>
               </div>
             </div>
             
-            <div className="rounded-md border border-terminal-border bg-terminal-bg/50 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="border-b border-terminal-border">
-                    <tr>
-                      {result.data.length > 0 && Object.keys(result.data[0]).map((key) => (
-                        <th key={key} className="px-4 py-3 text-left text-sm font-medium capitalize">
-                          {key.replace(/_/g, ' ')}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.data.map((row, index) => (
-                      <tr key={index} className="border-b border-terminal-border last:border-0">
-                        {Object.values(row).map((value, colIndex) => (
-                          <td key={colIndex} className="px-4 py-3 text-sm font-mono">
-                            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                          </td>
+            {/* Results Table */}
+            {result.data.length > 0 ? (
+              <div className="rounded-lg border overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        {Object.keys(result.data[0]).map((key) => (
+                          <th key={key} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            {key.replace(/_/g, ' ')}
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {result.data.map((row, index) => (
+                        <tr key={index} className="hover:bg-muted/20 transition-colors">
+                          {Object.values(row).map((value, colIndex) => (
+                            <td key={colIndex} className="px-4 py-3 text-sm">
+                              {typeof value === 'object' ? (
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                                  {JSON.stringify(value)}
+                                </code>
+                              ) : typeof value === 'number' ? (
+                                <span className="font-mono">{value.toLocaleString()}</span>
+                              ) : (
+                                String(value)
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Database className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                <p>No results found for this query</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
