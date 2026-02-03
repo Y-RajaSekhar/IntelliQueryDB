@@ -1,17 +1,21 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Database, Brain, BarChart3, Code, Zap, LogOut } from "lucide-react";
+import { Database, Brain, BarChart3, Code, Zap, LogOut, Shield } from "lucide-react";
 import { GenericDatabaseManager } from "@/components/GenericDatabaseManager";
 import { SQLQueryInterface } from "@/components/SQLQueryInterface";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { GenericNLPQueryInterface } from "@/components/GenericNLPQueryInterface";
 import { PerformanceMonitor } from "@/components/PerformanceMonitor";
 import { useAuth } from "@/components/AuthProvider";
+import { useUserRole } from "@/hooks/useUserRole";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("database");
   const { user, signOut } = useAuth();
+  const { isAdmin } = useUserRole();
+  const navigate = useNavigate();
 
   return (
     <div className="min-h-screen bg-background">
@@ -40,6 +44,17 @@ const Index = () => {
                   <span className="text-sm text-muted-foreground hidden md:inline">
                     {user.email}
                   </span>
+                  {isAdmin && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate("/admin")}
+                      className="flex items-center space-x-2"
+                    >
+                      <Shield className="h-4 w-4" />
+                      <span className="hidden md:inline">Admin</span>
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
