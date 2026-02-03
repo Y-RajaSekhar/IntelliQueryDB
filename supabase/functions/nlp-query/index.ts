@@ -57,7 +57,7 @@ serve(async (req) => {
       return `TABLE: ${table}\nFIELDS:\n${fieldDetails}\nSAMPLE ROW: ${JSON.stringify(sampleData, null, 2)}`;
     }).join('\n\n');
 
-    const systemPrompt = `You are NeuroDB AI - an expert Text-to-SQL assistant that converts natural language queries into precise SQL operations.
+    const systemPrompt = `You are QueryMind AI - an expert Text-to-SQL assistant that converts natural language queries into precise SQL operations.
 
 === DATABASE SCHEMA ===
 ${schemaDetails}
