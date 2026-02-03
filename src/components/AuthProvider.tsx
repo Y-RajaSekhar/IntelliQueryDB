@@ -134,9 +134,14 @@ const SignupForm = () => {
     setLoading(true);
 
     try {
+      const redirectUrl = `${window.location.origin}/`;
+      
       const { error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
+        options: {
+          emailRedirectTo: redirectUrl,
+        },
       });
 
       if (error) {
