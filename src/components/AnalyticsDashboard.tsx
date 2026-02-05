@@ -1,20 +1,22 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { TrendingUp, BarChart3, Target as ScatterIcon, PieChart as PieChartIcon, Brain, Save, Bookmark } from "lucide-react";
-import { useState, useMemo } from "react";
-import { useDataStore } from "@/hooks/useDataStore";
-import { toast } from "sonner";
-import { useSavedAnalytics } from "@/hooks/useSavedAnalytics";
-import { SaveAnalyticsDialog } from "./SaveAnalyticsDialog";
-import { SavedAnalyticsList } from "./SavedAnalyticsList";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+ import { Button } from "@/components/ui/button";
+ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+ import { BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+ import { TrendingUp, BarChart3, Target as ScatterIcon, PieChart as PieChartIcon, Brain, Save, FileText } from "lucide-react";
+ import { useState, useMemo } from "react";
+ import { useDataStore } from "@/hooks/useDataStore";
+ import { toast } from "sonner";
+ import { useSavedAnalytics } from "@/hooks/useSavedAnalytics";
+ import { SaveAnalyticsDialog } from "./SaveAnalyticsDialog";
+ import { SavedAnalyticsList } from "./SavedAnalyticsList";
+ import { ReportGenerator } from "./ReportGenerator";
 
 export const AnalyticsDashboard = () => {
   const { records, schema } = useDataStore();
   const { savedAnalytics, saveAnalytic, deleteAnalytic } = useSavedAnalytics();
   const [selectedAnalysis, setSelectedAnalysis] = useState<string>("");
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+   const [reportDialogOpen, setReportDialogOpen] = useState(false);
 
   // Auto-detect field types
   const { numericFields, categoricalFields } = useMemo(() => {
@@ -451,13 +453,13 @@ export const AnalyticsDashboard = () => {
                 <Save className="h-4 w-4" />
                 <span>Save Current</span>
               </Button>
-              <Button 
-                className="flex items-center space-x-2"
-                onClick={() => toast.info("Report generation coming soon!")}
-              >
-                <TrendingUp className="h-4 w-4" />
-                <span>Generate Report</span>
-              </Button>
+             <Button 
+               className="flex items-center space-x-2"
+               onClick={() => setReportDialogOpen(true)}
+             >
+               <FileText className="h-4 w-4" />
+               <span>Generate Report</span>
+             </Button>
             </div>
           </div>
         </CardContent>
@@ -666,6 +668,16 @@ export const AnalyticsDashboard = () => {
           }}
         />
       )}
+       
+       {/* Report Generator Dialog */}
+       <ReportGenerator
+         open={reportDialogOpen}
+         onOpenChange={setReportDialogOpen}
+         selectedAnalysis={selectedAnalysis}
+         mlInsights={mlInsights}
+         numericFields={numericFields}
+         categoricalFields={categoricalFields}
+       />
     </div>
   );
 };
