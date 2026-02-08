@@ -99,6 +99,7 @@ export type Database = {
           data: Json
           id: string
           record_type: string
+          schema_id: string | null
           updated_at: string | null
           user_id: string | null
         }
@@ -107,6 +108,7 @@ export type Database = {
           data: Json
           id?: string
           record_type: string
+          schema_id?: string | null
           updated_at?: string | null
           user_id?: string | null
         }
@@ -115,7 +117,49 @@ export type Database = {
           data?: Json
           id?: string
           record_type?: string
+          schema_id?: string | null
           updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "data_records_schema_id_fkey"
+            columns: ["schema_id"]
+            isOneToOne: false
+            referencedRelation: "data_schemas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      data_schemas: {
+        Row: {
+          color: string | null
+          created_at: string
+          description: string | null
+          icon: string | null
+          id: string
+          name: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          icon?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
           user_id?: string | null
         }
         Relationships: []

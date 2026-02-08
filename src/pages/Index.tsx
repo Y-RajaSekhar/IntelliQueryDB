@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Database, Brain, BarChart3, Code, Zap, LogOut, Shield } from "lucide-react";
+import { Database, Brain, BarChart3, Code, Zap, LogOut, Shield, Layers } from "lucide-react";
 import { GenericDatabaseManager } from "@/components/GenericDatabaseManager";
 import { SQLQueryInterface } from "@/components/SQLQueryInterface";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { GenericNLPQueryInterface } from "@/components/GenericNLPQueryInterface";
 import { PerformanceMonitor } from "@/components/PerformanceMonitor";
+import { SchemaManager } from "@/components/SchemaManager";
 import { useAuth } from "@/components/AuthProvider";
 import { useUserRole } from "@/hooks/useUserRole";
 
@@ -74,10 +75,14 @@ const Index = () => {
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-5 w-full max-w-3xl mx-auto bg-card/50">
+          <TabsList className="grid grid-cols-6 w-full max-w-4xl mx-auto bg-card/50">
             <TabsTrigger value="database" className="flex items-center space-x-2">
               <Database className="h-4 w-4" />
               <span className="hidden sm:inline">Database</span>
+            </TabsTrigger>
+            <TabsTrigger value="schemas" className="flex items-center space-x-2">
+              <Layers className="h-4 w-4" />
+              <span className="hidden sm:inline">Schemas</span>
             </TabsTrigger>
             <TabsTrigger value="sql" className="flex items-center space-x-2">
               <Code className="h-4 w-4" />
@@ -99,6 +104,10 @@ const Index = () => {
 
           <TabsContent value="database" className="space-y-6">
             <GenericDatabaseManager />
+          </TabsContent>
+
+          <TabsContent value="schemas" className="space-y-6">
+            <SchemaManager />
           </TabsContent>
 
           <TabsContent value="sql" className="space-y-6">
