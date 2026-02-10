@@ -12,7 +12,6 @@ serve(async (req) => {
   }
 
   try {
-    // Verify authentication
     const authHeader = req.headers.get('authorization');
     if (!authHeader) {
       return new Response(
@@ -36,60 +35,104 @@ serve(async (req) => {
       );
     }
 
-    const { query, tables, schemas, isMultiTable } = await req.json();
+    const { query, tables, schemas, isMultiTable, relationships, totalCounts } = await req.json();
     
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Build comprehensive schema information with data types
+    // Build comprehensive schema information with richer context
     const schemaDetails = Object.entries(schemas).map(([table, fields]) => {
-      const sampleData = tables[table]?.[0] || {};
+      const sampleRows = tables[table] || [];
+      const totalCount = totalCounts?.[table] || sampleRows.length;
+      
+      // Analyze each field deeply
       const fieldDetails = (fields as string[]).map(field => {
-        const sampleValue = sampleData[field];
-        const dataType = typeof sampleValue === 'number' ? 'number' :
-                        typeof sampleValue === 'boolean' ? 'boolean' :
-                        Array.isArray(sampleValue) ? 'array' : 'string';
+        const values = sampleRows.map((r: any) => r[field]).filter((v: any) => v !== null && v !== undefined);
+        const sampleValue = values[0];
+        
+        // Better type detection
+        let dataType = 'string';
+        if (values.length > 0) {
+          if (values.every((v: any) => typeof v === 'number' || (!isNaN(Number(v)) && v !== ''))) {
+            dataType = 'number';
+            const nums = values.map(Number).filter((n: number) => !isNaN(n));
+            const min = Math.min(...nums);
+            const max = Math.max(...nums);
+            const avg = nums.reduce((a: number, b: number) => a + b, 0) / nums.length;
+            return `  - ${field} (${dataType}, range: ${min}-${max}, avg: ${avg.toFixed(1)})`;
+          } else if (values.every((v: any) => typeof v === 'boolean')) {
+            dataType = 'boolean';
+          } else if (values.every((v: any) => Array.isArray(v))) {
+            dataType = 'array';
+          } else {
+            // For strings, show distinct values if categorical (few unique values)
+            const uniqueValues = [...new Set(values.map(String))];
+            if (uniqueValues.length <= 15 && uniqueValues.length < values.length * 0.7) {
+              return `  - ${field} (${dataType}, categorical, values: [${uniqueValues.map(v => `"${v}"`).join(', ')}])`;
+            }
+          }
+        }
         return `  - ${field} (${dataType})${sampleValue !== undefined ? ` e.g. "${sampleValue}"` : ''}`;
       }).join('\n');
       
-      return `TABLE: ${table}\nFIELDS:\n${fieldDetails}\nSAMPLE ROW: ${JSON.stringify(sampleData, null, 2)}`;
+      const sampleRowsStr = sampleRows.slice(0, 3).map((r: any, i: number) => 
+        `  Row ${i+1}: ${JSON.stringify(r)}`
+      ).join('\n');
+      
+      return `TABLE: ${table} (${totalCount} total records)\nFIELDS:\n${fieldDetails}\nSAMPLE DATA:\n${sampleRowsStr}`;
     }).join('\n\n');
 
-    const systemPrompt = `You are QueryMind AI - an expert Text-to-SQL assistant that converts natural language queries into precise SQL operations.
+    // Build relationship context
+    let relationshipContext = '';
+    if (relationships && relationships.length > 0) {
+      relationshipContext = '\n=== DEFINED RELATIONSHIPS ===\n' + 
+        relationships.map((r: any) => 
+          `${r.sourceSchema} .${r.sourceField} → ${r.targetSchema}.${r.targetField} (${r.type}${r.label ? `, label: "${r.label}"` : ''})`
+        ).join('\n') + 
+        '\nUse these relationships for JOIN operations when queries involve multiple related tables.\n';
+    }
+
+    const systemPrompt = `You are QueryMind AI - an expert Text-to-SQL assistant that converts natural language queries into precise, accurate SQL operations.
 
 === DATABASE SCHEMA ===
 ${schemaDetails}
+${relationshipContext}
+=== CRITICAL ACCURACY RULES ===
+1. ALWAYS check the actual field names and data types before generating operations.
+2. For numeric comparisons, ensure the field is numeric. For text searches, use the correct field.
+3. When the user says "top N", ALWAYS sort descending by the relevant field and limit to N.
+4. When the user mentions a specific value, check if it matches any categorical field values exactly.
+5. For "average", "total", "count" queries, use the correct aggregation on the correct field.
+6. Pay attention to plural/singular forms - "students" likely refers to the table, "student" to a record.
+7. If a query mentions fields from multiple tables, use JOIN operations with the defined relationships.
+8. For ambiguous field references, prefer the most semantically relevant field.
+9. String comparisons should be case-insensitive (use CONTAINS/ILIKE).
+10. When no specific sort or filter is requested, return ALL records.
 
-=== YOUR CAPABILITIES ===
-1. FILTERING: Filter data by any field with conditions (equals, greater than, less than, contains, etc.)
-2. SORTING: Order results by any field (ascending or descending)
-3. AGGREGATION: Calculate COUNT, SUM, AVG, MIN, MAX on numeric fields
-4. GROUPING: Group data by categorical fields and count occurrences
-5. LIMITING: Restrict result count
-6. MULTI-TABLE: For multiple tables, perform JOIN operations
+=== QUERY INTERPRETATION ===
+- "show", "list", "display", "get", "find", "what are" → SELECT (retrieve data)
+- "how many", "count", "number of", "total count" → COUNT aggregation
+- "average", "mean", "avg" → AVG aggregation
+- "total", "sum", "combined" → SUM aggregation
+- "highest", "maximum", "top", "best", "most", "largest" → MAX or ORDER BY DESC + LIMIT
+- "lowest", "minimum", "bottom", "worst", "least", "smallest" → MIN or ORDER BY ASC + LIMIT
+- "by [field]" → GROUP BY or ORDER BY depending on context
+- "where", "with", "that has/have", "whose", "which" → WHERE filter
+- "contains", "like", "includes", "has the word" → ILIKE/CONTAINS filter
+- "between X and Y" → range filter (field >= X AND field <= Y)
+- "top N", "first N", "last N" → LIMIT N with appropriate sort
+- "each", "per", "breakdown by" → GROUP BY
+- "and" between conditions → multiple filters (AND)
+- "or" between conditions → alternative filters (OR)
 
-=== QUERY INTERPRETATION RULES ===
-- "show", "list", "display", "get", "find" → retrieve data
-- "how many", "count", "number of" → COUNT aggregation
-- "average", "mean" → AVG aggregation
-- "total", "sum" → SUM aggregation
-- "highest", "maximum", "top", "best" → MAX or sort DESC with LIMIT
-- "lowest", "minimum", "bottom", "worst" → MIN or sort ASC with LIMIT
-- "by [field]" usually means GROUP BY or ORDER BY
-- "where", "with", "that has" → FILTER condition
-- "contains", "like", "includes" → CONTAINS filter
-- "top N", "first N" → LIMIT N with appropriate sort
-- "youngest", "oldest", "newest" → sort by date/age field
-
-=== IMPORTANT INSTRUCTIONS ===
-- ALWAYS analyze the query carefully and map it to the correct fields
-- For "top N by X", sort by X descending and limit to N
-- For "youngest/oldest", determine the age/date field and sort appropriately
-- When filtering by text, use CONTAINS for partial matches
-- For aggregations, clearly specify the field and aggregation type
-- Include a clear interpretation of what you understood from the query
+=== MULTI-STEP QUERY HANDLING ===
+When a query combines multiple operations (e.g., "top 3 students by GPA in Computer Science"):
+1. First identify all filters (department = "Computer Science")
+2. Then identify sorting (ORDER BY gpa DESC)
+3. Then identify limits (LIMIT 3)
+4. Generate operations in order: filter → sort → limit
 
 === SECURITY ===
 - Only generate SELECT operations (no INSERT, UPDATE, DELETE, DROP)
@@ -106,19 +149,19 @@ ${schemaDetails}
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Convert this natural language query to SQL operations: "${query}"` }
+          { role: "user", content: `Convert this natural language query to SQL operations. Think step by step about what the user wants, then generate the correct operations.\n\nQuery: "${query}"\nAvailable tables: [${Object.keys(schemas).join(', ')}]` }
         ],
         tools: [{
           type: "function",
           function: {
             name: "analyze_query",
-            description: "Analyze the natural language query and return structured query parameters",
+            description: "Analyze the natural language query and return structured query parameters. Think carefully about field names, data types, and the user's intent.",
             parameters: {
               type: "object",
               properties: {
                 interpretation: { 
                   type: "string", 
-                  description: "Clear explanation of what the AI understood from the query (1-2 sentences)"
+                  description: "Clear explanation of what you understood from the query and how you plan to answer it (2-3 sentences)"
                 },
                 queryType: {
                   type: "string",
@@ -127,18 +170,18 @@ ${schemaDetails}
                 },
                 sqlQuery: { 
                   type: "string", 
-                  description: "Complete SQL query string for complex multi-table joins" 
+                  description: "Complete SQL query string. Generate this for ALL queries as a readable reference." 
                 },
                 joins: {
                   type: "array",
                   items: {
                     type: "object",
                     properties: {
-                      fromTable: { type: "string", description: "Primary table name" },
-                      toTable: { type: "string", description: "Secondary table to join" },
-                      fromField: { type: "string", description: "Field from primary table" },
-                      toField: { type: "string", description: "Field from secondary table" },
-                      joinType: { type: "string", enum: ["INNER", "LEFT", "RIGHT", "FULL"], description: "Type of join" }
+                      fromTable: { type: "string" },
+                      toTable: { type: "string" },
+                      fromField: { type: "string" },
+                      toField: { type: "string" },
+                      joinType: { type: "string", enum: ["INNER", "LEFT", "RIGHT", "FULL"] }
                     },
                     required: ["fromTable", "toTable", "fromField", "toField"]
                   },
@@ -155,27 +198,27 @@ ${schemaDetails}
                         description: "Operation type"
                       },
                       table: { type: "string", description: "Table name for this operation" },
-                      field: { type: "string", description: "Field name to operate on" },
+                      field: { type: "string", description: "Exact field name from the schema (must match exactly)" },
                       condition: { 
                         type: "string", 
                         enum: ["gt", "lt", "gte", "lte", "eq", "neq", "contains", "startswith", "endswith", "avg", "sum", "max", "min", "count", "asc", "desc"],
                         description: "Condition or aggregation type"
                       },
                       value: { 
-                        description: "Value for comparison, or limit number. Use appropriate type (number for numeric comparisons, string for text)"
+                        description: "Value for comparison. Use number type for numeric comparisons, string for text. For limit operations, use the number of results to return."
                       }
                     },
                     required: ["type"]
                   },
-                  description: "Array of operations to apply in sequence"
+                  description: "Array of operations to apply IN ORDER: filters first, then sort, then aggregate/groupby, then limit"
                 },
                 selectFields: {
                   type: "array",
                   items: { type: "string" },
-                  description: "Specific fields to select (if not all)"
+                  description: "Specific fields to select (if not all). Must be exact field names from schema."
                 }
               },
-              required: ["interpretation", "operations"],
+              required: ["interpretation", "operations", "sqlQuery"],
               additionalProperties: false
             }
           }
@@ -211,7 +254,6 @@ ${schemaDetails}
     
     const parsedResponse = JSON.parse(toolCall.function.arguments);
     
-    // Log for debugging
     console.log("Query:", query);
     console.log("AI Response:", JSON.stringify(parsedResponse, null, 2));
     

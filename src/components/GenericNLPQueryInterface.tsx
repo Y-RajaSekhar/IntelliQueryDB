@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { useQueryHistory } from "@/hooks/useQueryHistory";
 import { QueryHistoryPanel } from "@/components/QueryHistoryPanel";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSchemaRelationships } from "@/hooks/useSchemaRelationships";
+import { useDataSchemas } from "@/hooks/useDataSchemas";
 
 interface NLPResult {
   naturalQuery: string;
@@ -26,6 +28,8 @@ interface NLPResult {
 export const GenericNLPQueryInterface = () => {
   const { toast } = useToast();
   const { records, schema, recordType } = useDataStore();
+  const { relationships } = useSchemaRelationships();
+  const { schemas: dataSchemas } = useDataSchemas();
   const [naturalQuery, setNaturalQuery] = useState("");
   const [result, setResult] = useState<NLPResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -155,14 +159,28 @@ export const GenericNLPQueryInterface = () => {
       
       const tablesData: Record<string, any> = {};
       const tablesSchema: Record<string, string[]> = {};
+      const totalCounts: Record<string, number> = {};
       
       for (const table of tablesToQuery) {
         const tableRecords = freshRecords[table] || [];
+        totalCounts[table] = tableRecords.length;
         if (tableRecords.length > 0) {
-          tablesData[table] = tableRecords.slice(0, 5).map(r => r.data);
+          // Send up to 15 sample rows for better type/value detection
+          tablesData[table] = tableRecords.slice(0, 15).map(r => r.data);
           tablesSchema[table] = Object.keys(tableRecords[0].data || {});
         }
       }
+      
+      // Build relationship context from schema relationships
+      const schemaNameMap = Object.fromEntries(dataSchemas.map(s => [s.id, s.name]));
+      const relationshipContext = relationships.map(r => ({
+        sourceSchema: schemaNameMap[r.source_schema_id] || r.source_schema_id,
+        targetSchema: schemaNameMap[r.target_schema_id] || r.target_schema_id,
+        sourceField: r.source_field,
+        targetField: r.target_field,
+        type: r.relationship_type,
+        label: r.label,
+      }));
       
       setProcessingStep("AI is analyzing your query...");
       const { data: aiResponse, error: functionError } = await supabase.functions.invoke('nlp-query', {
@@ -170,7 +188,9 @@ export const GenericNLPQueryInterface = () => {
           query: naturalQuery,
           tables: tablesData,
           schemas: tablesSchema,
-          isMultiTable: tablesToQuery.length > 1
+          isMultiTable: tablesToQuery.length > 1,
+          relationships: relationshipContext,
+          totalCounts,
         }
       });
 
