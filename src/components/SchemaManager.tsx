@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Edit2, Trash2, Folder, Database, FileText, Layers, Box, Archive, FolderOpen, Loader2 } from "lucide-react";
 import { useDataSchemas, DataSchema, CreateSchemaInput } from "@/hooks/useDataSchemas";
 import { useAuth } from "@/components/AuthProvider";
+import { SchemaRelationships } from "@/components/SchemaRelationships";
 
 const ICON_OPTIONS = [
   { value: "folder", label: "Folder", icon: Folder },
@@ -274,6 +275,9 @@ export function SchemaManager() {
           })}
         </div>
       )}
+
+      {/* Schema Relationships */}
+      <SchemaRelationships schemas={schemas} />
 
       {/* Edit Dialog */}
       <Dialog open={!!editingSchema} onOpenChange={(open) => !open && setEditingSchema(null)}>
