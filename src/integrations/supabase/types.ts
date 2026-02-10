@@ -357,6 +357,57 @@ export type Database = {
         }
         Relationships: []
       }
+      schema_relationships: {
+        Row: {
+          created_at: string
+          id: string
+          label: string | null
+          relationship_type: string
+          source_field: string
+          source_schema_id: string
+          target_field: string
+          target_schema_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          relationship_type?: string
+          source_field: string
+          source_schema_id: string
+          target_field: string
+          target_schema_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          relationship_type?: string
+          source_field?: string
+          source_schema_id?: string
+          target_field?: string
+          target_schema_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schema_relationships_source_schema_id_fkey"
+            columns: ["source_schema_id"]
+            isOneToOne: false
+            referencedRelation: "data_schemas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schema_relationships_target_schema_id_fkey"
+            columns: ["target_schema_id"]
+            isOneToOne: false
+            referencedRelation: "data_schemas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       student_skills: {
         Row: {
           category: string
