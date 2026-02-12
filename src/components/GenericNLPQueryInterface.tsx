@@ -548,7 +548,7 @@ export const GenericNLPQueryInterface = () => {
               </div>
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  QueryMind AI Query
+                  IntelliQueryDB AI Query
                   <Badge variant="secondary" className="text-xs">
                     <Sparkles className="h-3 w-3 mr-1" />
                     Powered by AI

@@ -30,7 +30,7 @@ const Index = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-neon-blue bg-clip-text text-transparent">
-                  QueryMind
+                  IntelliQueryDB
                 </h1>
                 <p className="text-sm text-muted-foreground">AI-Powered Database System</p>
               </div>

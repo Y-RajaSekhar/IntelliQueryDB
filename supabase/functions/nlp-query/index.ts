@@ -94,7 +94,7 @@ serve(async (req) => {
         '\nUse these relationships for JOIN operations when queries involve multiple related tables.\n';
     }
 
-    const systemPrompt = `You are QueryMind AI - an expert Text-to-SQL assistant that converts natural language queries into precise, accurate SQL operations.
+    const systemPrompt = `You are IntelliQueryDB AI - an expert Text-to-SQL assistant that converts natural language queries into precise, accurate SQL operations.
 
 === DATABASE SCHEMA ===
 ${schemaDetails}
