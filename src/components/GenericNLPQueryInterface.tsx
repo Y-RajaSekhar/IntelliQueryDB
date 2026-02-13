@@ -261,11 +261,9 @@ export const GenericNLPQueryInterface = () => {
         filteredData = (freshRecords[primaryTable] || []).map(r => r.data);
       }
       
-      if (!sqlQuery && (!operations || operations.length === 0)) {
-        const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
-        sqlQuery = `SELECT * FROM ${fromClause};`;
-      } else if (!sqlQuery && operations) {
-        // Process operations
+      // Always process operations for client-side filtering/sorting/aggregation
+      // The sqlQuery from AI is used for display only
+      if (operations && operations.length > 0) {
         for (const op of operations) {
           const { type, field, condition, value } = op;
           
@@ -287,18 +285,6 @@ export const GenericNLPQueryInterface = () => {
           const sanitizedValue = sanitizeValue(value);
           
           if (type === "filter" && field && condition && sanitizedValue !== null && sanitizedValue !== undefined) {
-            const operators: Record<string, string> = {
-              gt: ">", lt: "<", gte: ">=", lte: "<=", eq: "=", neq: "!=", 
-              contains: "ILIKE", startswith: "ILIKE", endswith: "ILIKE"
-            };
-            const sqlOp = operators[condition] || "=";
-            let sqlValue = typeof sanitizedValue === 'string' ? `'${sanitizedValue}'` : sanitizedValue;
-            if (condition === "contains") sqlValue = `'%${sanitizedValue}%'`;
-            if (condition === "startswith") sqlValue = `'${sanitizedValue}%'`;
-            if (condition === "endswith") sqlValue = `'%${sanitizedValue}'`;
-            
-            sqlParts.push(`${field} ${sqlOp} ${sqlValue}`);
-            
             filteredData = filteredData.filter((r: any) => {
               const fieldValue = r[field];
               if (fieldValue === undefined || fieldValue === null) return false;
@@ -315,90 +301,79 @@ export const GenericNLPQueryInterface = () => {
               return true;
             });
           } else if (type === "sort" && field) {
-            const direction = condition === "asc" ? "ASC" : "DESC";
-            sqlParts.push(`ORDER BY ${field} ${direction}`);
-            
-            filteredData = filteredData.sort((a: any, b: any) => {
+            filteredData = [...filteredData].sort((a: any, b: any) => {
               const aVal = a[field];
               const bVal = b[field];
               
-              // Handle numeric sorting
               if (typeof aVal === 'number' && typeof bVal === 'number') {
                 return condition === "asc" ? aVal - bVal : bVal - aVal;
               }
               
-              // Handle string sorting
               const comparison = String(aVal || '').localeCompare(String(bVal || ''));
               return condition === "asc" ? comparison : -comparison;
             });
           } else if (type === "limit" && value) {
-            sqlParts.push(`LIMIT ${value}`);
             filteredData = filteredData.slice(0, Number(value));
           } else if (type === "groupby" && field) {
-            const grouped = new Map<string, number>();
+            // Check if there's also an aggregate operation for this groupby
+            const aggregateOp = operations.find((o: any) => o.type === "aggregate");
+            const grouped = new Map<string, any[]>();
             filteredData.forEach((r: any) => {
               const key = String(r[field] ?? 'Unknown');
-              grouped.set(key, (grouped.get(key) || 0) + 1);
+              if (!grouped.has(key)) grouped.set(key, []);
+              grouped.get(key)!.push(r);
             });
             
-            filteredData = Array.from(grouped.entries()).map(([key, count]) => ({
-              [field]: key,
-              count: count
-            }));
-            
-            const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
-            sqlQuery = `SELECT ${field}, COUNT(*) as count FROM ${fromClause} GROUP BY ${field};`;
-          } else if (type === "aggregate" && field && condition) {
-            const values = filteredData.map((r: any) => Number(r[field])).filter((v: number) => !isNaN(v));
-            let aggregateResult = 0;
-            let aggregateName = "";
-            
-            const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
-            
-            if (condition === "avg") {
-              aggregateResult = values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
-              aggregateName = "average";
-              sqlQuery = `SELECT AVG(${field}) as average FROM ${fromClause};`;
-            } else if (condition === "sum") {
-              aggregateResult = values.reduce((sum, v) => sum + v, 0);
-              aggregateName = "total";
-              sqlQuery = `SELECT SUM(${field}) as total FROM ${fromClause};`;
-            } else if (condition === "max") {
-              aggregateResult = values.length > 0 ? Math.max(...values) : 0;
-              aggregateName = "maximum";
-              sqlQuery = `SELECT MAX(${field}) as maximum FROM ${fromClause};`;
-            } else if (condition === "min") {
-              aggregateResult = values.length > 0 ? Math.min(...values) : 0;
-              aggregateName = "minimum";
-              sqlQuery = `SELECT MIN(${field}) as minimum FROM ${fromClause};`;
-            } else if (condition === "count") {
-              aggregateResult = filteredData.length;
-              aggregateName = "count";
-              sqlQuery = `SELECT COUNT(*) as count FROM ${fromClause};`;
+            if (aggregateOp && aggregateOp.field && aggregateOp.condition) {
+              const aggField = aggregateOp.field;
+              const aggCond = aggregateOp.condition;
+              filteredData = Array.from(grouped.entries()).map(([key, rows]) => {
+                const values = rows.map((r: any) => Number(r[aggField])).filter((v: number) => !isNaN(v));
+                let result = 0;
+                if (aggCond === "avg") result = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0;
+                else if (aggCond === "sum") result = values.reduce((s, v) => s + v, 0);
+                else if (aggCond === "max") result = values.length > 0 ? Math.max(...values) : 0;
+                else if (aggCond === "min") result = values.length > 0 ? Math.min(...values) : 0;
+                else if (aggCond === "count") result = rows.length;
+                return {
+                  [field]: key,
+                  [aggCond]: parseFloat(result.toFixed(2)),
+                };
+              });
+            } else {
+              filteredData = Array.from(grouped.entries()).map(([key, rows]) => ({
+                [field]: key,
+                count: rows.length
+              }));
             }
-            
-            filteredData = [{ 
-              [aggregateName]: parseFloat(aggregateResult.toFixed(2)),
-              field: field,
-              operation: condition.toUpperCase()
-            }];
+          } else if (type === "aggregate" && field && condition) {
+            // Skip if already handled by groupby above
+            const hasGroupBy = operations.some((o: any) => o.type === "groupby");
+            if (!hasGroupBy) {
+              const values = filteredData.map((r: any) => Number(r[field])).filter((v: number) => !isNaN(v));
+              let aggregateResult = 0;
+              let aggregateName = "";
+              
+              if (condition === "avg") { aggregateResult = values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : 0; aggregateName = "average"; }
+              else if (condition === "sum") { aggregateResult = values.reduce((s, v) => s + v, 0); aggregateName = "total"; }
+              else if (condition === "max") { aggregateResult = values.length > 0 ? Math.max(...values) : 0; aggregateName = "maximum"; }
+              else if (condition === "min") { aggregateResult = values.length > 0 ? Math.min(...values) : 0; aggregateName = "minimum"; }
+              else if (condition === "count") { aggregateResult = filteredData.length; aggregateName = "count"; }
+              
+              filteredData = [{ 
+                [aggregateName]: parseFloat(aggregateResult.toFixed(2)),
+                field: field,
+                operation: condition.toUpperCase()
+              }];
+            }
           }
         }
-        
-        // Build final SQL if not already set
-        if (!sqlQuery) {
-          const whereClauses = sqlParts.filter(p => !p.startsWith('ORDER') && !p.startsWith('LIMIT'));
-          const orderClause = sqlParts.find(p => p.startsWith('ORDER'));
-          const limitClause = sqlParts.find(p => p.startsWith('LIMIT'));
-          
-          const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
-          const selectClause = selectFields?.length ? selectFields.join(', ') : '*';
-          sqlQuery = `SELECT ${selectClause} FROM ${fromClause}`;
-          if (whereClauses.length > 0) sqlQuery += ` WHERE ${whereClauses.join(' AND ')}`;
-          if (orderClause) sqlQuery += ` ${orderClause}`;
-          if (limitClause) sqlQuery += ` ${limitClause}`;
-          sqlQuery += ';';
-        }
+      }
+      
+      // Use AI-generated SQL for display, or build a fallback
+      if (!sqlQuery) {
+        const fromClause = tablesToQuery.length === 1 ? tablesToQuery[0] : tablesToQuery.join(', ');
+        sqlQuery = `SELECT * FROM ${fromClause};`;
       }
       
       const executionTime = performance.now() - startTime;
