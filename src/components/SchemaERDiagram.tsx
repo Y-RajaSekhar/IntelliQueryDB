@@ -1,15 +1,13 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Key, Type, Hash, Calendar, ToggleLeft, Box, List, Minus } from "lucide-react";
+import { Loader2, Key, Type, Hash, Calendar, ToggleLeft, Box, List, Minus, Folder, FolderOpen, Database, FileText, Layers, Archive } from "lucide-react";
 import { DataSchema } from "@/hooks/useDataSchemas";
 import { useSchemaColumns, SchemaColumn } from "@/hooks/useSchemaColumns";
 import { SchemaRelationship } from "@/hooks/useSchemaRelationships";
+import type { LucideIcon } from "lucide-react";
 
-const ICON_MAP: Record<string, typeof Folder> = {};
-
-import { Folder, FolderOpen, Database, FileText, Layers, Archive } from "lucide-react";
-Object.assign(ICON_MAP, {
+const ICON_MAP: Record<string, LucideIcon> = {
   folder: Folder,
   "folder-open": FolderOpen,
   database: Database,
@@ -17,7 +15,7 @@ Object.assign(ICON_MAP, {
   layers: Layers,
   box: Box,
   archive: Archive,
-});
+};
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
   string: <Type className="h-3 w-3 text-muted-foreground" />,
